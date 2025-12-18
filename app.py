@@ -15,7 +15,7 @@ from typing import Optional, List, Literal, Dict, Any
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -205,9 +205,59 @@ SearchMode = Literal["quick", "terms", "fulltext"]
 
 
 class ReminderUpdate(BaseModel):
-    recipients: List[str] = Field(..., min_items=1)
+    recipients: List[str] = Field(default_factory=list)
     offsets: List[int] = Field(default_factory=lambda: [90, 60, 30, 7])
     enabled: bool = True
+
+    @staticmethod
+    def _coerce_int(value) -> Optional[int]:
+        """Best-effort conversion that tolerates strings like '30 days'."""
+        if value is None:
+            return None
+        if isinstance(value, bool):  # avoid treating bool as int
+            return None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        # strings: extract the first integer-like token
+        try:
+            import re
+
+            match = re.search(r"-?\d+", str(value))
+            if match:
+                return int(match.group(0))
+        except Exception:
+            return None
+        return None
+
+    @validator("recipients", pre=True)
+    def normalize_recipients(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            return [str(v).strip() for v in value if str(v).strip()]
+        return []
+
+    @validator("offsets", pre=True)
+    def normalize_offsets(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.replace(";", ",").split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = []
+            for v in value:
+                coerced = cls._coerce_int(v)
+                if coerced is None:
+                    continue
+                cleaned.append(coerced)
+            return cleaned
+        return []
 
 
 class UploadResponse(BaseModel):
