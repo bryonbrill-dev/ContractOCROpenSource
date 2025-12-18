@@ -227,6 +227,38 @@ class TagUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
 
+
+class ContractUpdate(BaseModel):
+    title: Optional[str] = None
+    vendor: Optional[str] = None
+    agreement_type: Optional[str] = None
+
+
+class TermUpsert(BaseModel):
+    term_key: str
+    value_raw: str
+    value_normalized: Optional[str] = None
+    status: str = "manual"
+    confidence: float = 0.95
+    value_type: str = "text"
+    source_page: Optional[int] = None
+    source_snippet: Optional[str] = None
+    create_definition_name: Optional[str] = None
+    event_type: Optional[str] = None
+    event_date: Optional[str] = None
+
+
+class EventCreate(BaseModel):
+    event_type: str
+    event_date: str
+    derived_from_term_key: Optional[str] = None
+
+
+class EventUpdate(BaseModel):
+    event_type: Optional[str] = None
+    event_date: Optional[str] = None
+    derived_from_term_key: Optional[str] = None
+
 # ----------------------------
 # Schema + seed (inline)
 # ----------------------------
@@ -364,6 +396,7 @@ INSERT OR IGNORE INTO term_definitions (id, name, key, value_type, enabled, prio
   (lower(hex(randomblob(16))), 'Effective Date', 'effective_date', 'date', 1, 10, 'effective date; effective as of; commencement', datetime('now')),
   (lower(hex(randomblob(16))), 'Renewal Date', 'renewal_date', 'date', 1, 20, 'renewal date; renews on; term ends', datetime('now')),
   (lower(hex(randomblob(16))), 'Termination Date', 'termination_date', 'date', 1, 30, 'termination date; terminates on; expires on', datetime('now')),
+  (lower(hex(randomblob(16))), 'Extraction Sensitivity', 'extraction_sensitivity', 'text', 1, 35, 'sensitivity; extraction confidence; classifier confidence', datetime('now')),
   (lower(hex(randomblob(16))), 'Automatic Renewal', 'automatic_renewal', 'bool', 1, 40, 'auto renew; automatically renews; renews automatically', datetime('now')),
   (lower(hex(randomblob(16))), 'Auto-Renew Opt-Out Days', 'auto_renew_opt_out_days', 'int', 1, 50, 'notice; written notice; days prior to renewal', datetime('now')),
   (lower(hex(randomblob(16))), 'Auto-Renew Opt-Out Date (calculated)', 'auto_renew_opt_out_date', 'date', 1, 60, 'calculated from renewal date - opt-out days', datetime('now')),
@@ -455,6 +488,104 @@ def detect_agreement_type(ocr_text: str, filename: str) -> str:
         return "Order Form"
     return "Uncategorized"
 
+
+TERM_EVENT_MAP = {
+    "effective_date": "effective",
+    "renewal_date": "renewal",
+    "termination_date": "termination",
+    "auto_renew_opt_out_date": "auto_opt_out",
+}
+
+
+def _ensure_term_definition(conn: sqlite3.Connection, term_key: str, value_type: str, name: Optional[str]) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM term_definitions WHERE key = ?",
+        (term_key,),
+    ).fetchone()
+    if row:
+        return row
+
+    display_name = name or term_key.replace("_", " ").title()
+    conn.execute(
+        """
+        INSERT INTO term_definitions (id, name, key, value_type, enabled, priority, created_at)
+        VALUES (?, ?, ?, ?, 1, 100, ?)
+        """,
+        (str(uuid.uuid4()), display_name, term_key, value_type or "text", now_iso()),
+    )
+    return conn.execute(
+        "SELECT * FROM term_definitions WHERE key = ?",
+        (term_key,),
+    ).fetchone()
+
+
+def _normalize_date_string(date_str: str) -> str:
+    try:
+        return date.fromisoformat(date_str).isoformat()
+    except Exception:
+        try:
+            return datetime.fromisoformat(date_str).date().isoformat()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Date values must be ISO formatted (YYYY-MM-DD)")
+
+
+def _upsert_manual_term(contract_id: str, payload: TermUpsert) -> Dict[str, Any]:
+    value_type = payload.value_type or "text"
+    value_norm = payload.value_normalized or payload.value_raw
+    if value_type == "date" and payload.value_normalized:
+        value_norm = _normalize_date_string(payload.value_normalized)
+    if payload.event_date:
+        payload.event_date = _normalize_date_string(payload.event_date)
+
+    event_type = payload.event_type or TERM_EVENT_MAP.get(payload.term_key)
+    event_date = payload.event_date or (value_norm if value_type == "date" else None)
+
+    with db() as conn:
+        _ensure_term_definition(conn, payload.term_key, value_type, payload.create_definition_name)
+        conn.execute(
+            "DELETE FROM term_instances WHERE contract_id = ? AND term_key = ?",
+            (contract_id, payload.term_key),
+        )
+        conn.execute(
+            "DELETE FROM events WHERE contract_id = ? AND derived_from_term_key = ?",
+            (contract_id, payload.term_key),
+        )
+        conn.execute(
+            """
+            INSERT INTO term_instances
+              (contract_id, term_key, value_raw, value_normalized, confidence, status, source_page, source_snippet, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                contract_id,
+                payload.term_key,
+                payload.value_raw,
+                value_norm,
+                float(payload.confidence or 0),
+                payload.status or "manual",
+                payload.source_page,
+                payload.source_snippet,
+                now_iso(),
+            ),
+        )
+
+        ev_id = None
+        if event_type and event_date:
+            ev_id = str(uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO events (id, contract_id, event_type, event_date, derived_from_term_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (ev_id, contract_id, event_type, event_date, payload.term_key, now_iso()),
+            )
+
+    return {
+        "term_key": payload.term_key,
+        "event_id": ev_id,
+        "event_type": event_type,
+    }
+
 # ----------------------------
 # Agreement types / Tags endpoints
 # ----------------------------
@@ -473,11 +604,12 @@ def list_tags():
 @app.post("/api/tags")
 def create_tag(tag: TagCreate):
     with db() as conn:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO tags (name, color, created_at) VALUES (?, ?, ?)",
             (tag.name, tag.color, now_iso()),
         )
-        return {"name": tag.name, "color": tag.color}
+        tag_id = cur.lastrowid
+        return {"id": tag_id, "name": tag.name, "color": tag.color}
 
 
 @app.put("/api/tags/{tag_id}")
@@ -495,6 +627,15 @@ def delete_tag(tag_id: int):
     with db() as conn:
         conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
         return {"deleted": tag_id}
+
+
+@app.get("/api/terms/definitions")
+def list_term_definitions():
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, key, value_type, enabled, priority, extraction_hint FROM term_definitions ORDER BY priority ASC, name ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 @app.post("/api/contracts/{contract_id}/tags/{tag_id}")
@@ -725,6 +866,46 @@ def list_contracts(
 
         return result
 
+
+@app.put("/api/contracts/{contract_id}")
+def update_contract(contract_id: str, payload: ContractUpdate):
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT * FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        fields = []
+        params: List[Any] = []
+
+        if payload.title is not None:
+            fields.append("title = ?")
+            params.append(payload.title)
+        if payload.vendor is not None:
+            fields.append("vendor = ?")
+            params.append(payload.vendor)
+        if payload.agreement_type is not None:
+            fields.append("agreement_type = ?")
+            params.append(payload.agreement_type or "Uncategorized")
+
+        if fields:
+            conn.execute(
+                f"UPDATE contracts SET {', '.join(fields)} WHERE id = ?",
+                tuple(params + [contract_id]),
+            )
+            conn.execute(
+                "UPDATE contracts_fts SET title = ?, vendor = ? WHERE contract_id = ?",
+                (
+                    payload.title or existing["title"],
+                    payload.vendor or existing["vendor"] or "",
+                    contract_id,
+                ),
+            )
+
+    return get_contract(contract_id)
+
 # ----------------------------
 # Contract detail
 # ----------------------------
@@ -785,6 +966,84 @@ def get_contract(contract_id: str):
             "tags": [dict(t) for t in tags],
             "reminders": reminder_map,
         }
+
+
+@app.put("/api/contracts/{contract_id}/terms/{term_key}")
+def upsert_term(contract_id: str, term_key: str, payload: TermUpsert):
+    if payload.term_key and payload.term_key != term_key:
+        raise HTTPException(status_code=400, detail="term_key mismatch")
+    payload.term_key = term_key
+    _upsert_manual_term(contract_id, payload)
+    return get_contract(contract_id)
+
+
+@app.delete("/api/contracts/{contract_id}/terms/{term_key}")
+def delete_term(contract_id: str, term_key: str):
+    with db() as conn:
+        conn.execute(
+            "DELETE FROM term_instances WHERE contract_id = ? AND term_key = ?",
+            (contract_id, term_key),
+        )
+        conn.execute(
+            "DELETE FROM events WHERE contract_id = ? AND derived_from_term_key = ?",
+            (contract_id, term_key),
+        )
+    return {"deleted": term_key}
+
+
+@app.post("/api/contracts/{contract_id}/events")
+def create_event(contract_id: str, payload: EventCreate):
+    event_date = _normalize_date_string(payload.event_date)
+    with db() as conn:
+        c = conn.execute(
+            "SELECT id FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
+        if not c:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        ev_id = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT INTO events (id, contract_id, event_type, event_date, derived_from_term_key, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (ev_id, contract_id, payload.event_type, event_date, payload.derived_from_term_key, now_iso()),
+        )
+
+    return {"event_id": ev_id}
+
+
+@app.put("/api/events/{event_id}")
+def update_event(event_id: str, payload: EventUpdate):
+    with db() as conn:
+        ev = conn.execute(
+            "SELECT * FROM events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if not ev:
+            raise HTTPException(status_code=404, detail="Event not found")
+
+        new_date = payload.event_date or ev["event_date"]
+        if payload.event_date:
+            new_date = _normalize_date_string(payload.event_date)
+        new_type = payload.event_type or ev["event_type"]
+        derived = payload.derived_from_term_key if payload.derived_from_term_key is not None else ev["derived_from_term_key"]
+
+        conn.execute(
+            "UPDATE events SET event_type = ?, event_date = ?, derived_from_term_key = ? WHERE id = ?",
+            (new_type, new_date, derived, event_id),
+        )
+
+    return {"event_id": event_id, "event_type": new_type, "event_date": new_date}
+
+
+@app.delete("/api/events/{event_id}")
+def delete_event(event_id: str):
+    with db() as conn:
+        conn.execute("DELETE FROM reminder_settings WHERE event_id = ?", (event_id,))
+        conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+    return {"deleted": event_id}
 
 
 @app.get("/api/contracts/{contract_id}/status")
@@ -848,17 +1107,22 @@ def list_events(month: str, event_type: str = "all", sort: str = "date_asc"):
     month: 'YYYY-MM'
     event_type: 'all' | 'renewal' | 'effective' | 'termination' | 'auto_opt_out' etc.
     """
-    try:
-        y, m = month.split("-")
-        y = int(y)
-        m = int(m)
-        start = date(y, m, 1)
-        end = date(y + (m // 12), (m % 12) + 1, 1)
-    except Exception:
-        raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+    params: List[Any] = []
+    where = "WHERE 1=1"
 
-    params: List[Any] = [start.isoformat(), end.isoformat()]
-    where = "WHERE e.event_date >= ? AND e.event_date < ?"
+    if month != "all":
+        try:
+            y, m = month.split("-")
+            y = int(y)
+            m = int(m)
+            start = date(y, m, 1)
+            end = date(y + (m // 12), (m % 12) + 1, 1)
+        except Exception:
+            raise HTTPException(status_code=400, detail="month must be YYYY-MM or 'all'")
+
+        params = [start.isoformat(), end.isoformat()]
+        where = "WHERE e.event_date >= ? AND e.event_date < ?"
+
     if event_type != "all":
         where += " AND e.event_type = ?"
         params.append(event_type)

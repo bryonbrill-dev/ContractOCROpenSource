@@ -39,6 +39,12 @@
     .pill { background: #eef2ff; color: #2e3b8b; padding: 4px 8px; border-radius: 999px; font-size: 11px; border: 1px solid #d0d7ff; }
     .event-type { background: #e3f2fd; color: #1565c0; border-color: #bbdefb; }
     .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #444; }
+    .section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; background: #f8fafc; }
+    .pill.tag { border-color: transparent; }
+    .section h4 { margin: 0 0 6px 0; }
+    .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .muted-input { width: 100%; box-sizing: border-box; }
+    .chip-btn { background: none; border: none; cursor: pointer; color: #b91c1c; margin-left: 6px; }
   </style>
 </head>
 <body>
@@ -54,6 +60,7 @@
   <div class="nav">
     <button id="navContracts" class="active">Contracts</button>
     <button id="navEvents">Events</button>
+    <button id="navPlanner">Planner</button>
   </div>
 
   <div id="contractsPage">
@@ -97,24 +104,28 @@
 
   <div id="eventsPage" class="hidden">
     <div class="card" style="margin-top:16px">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-        <div>
-          <h3 style="margin:0">Expiring Events</h3>
-          <div class="muted small">Search and review renewal/termination timelines like nested folders.</div>
-        </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div>
+              <h3 style="margin:0">Expiring Events</h3>
+              <div class="muted small">Search and review renewal/termination timelines like nested folders.</div>
+            </div>
         <button id="eventsRefresh">Refresh</button>
       </div>
 
-      <div class="row wrap filters" style="margin-top:12px; gap:12px;">
-        <label style="min-width:140px;">
-          Month
-          <input id="eventMonth" type="month" />
-        </label>
-        <label style="min-width:160px;">
-          Event Type
-          <select id="eventTypeFilter">
-            <option value="all">All types</option>
-            <option value="renewal">Renewal</option>
+          <div class="row wrap filters" style="margin-top:12px; gap:12px;">
+            <label style="min-width:140px;">
+              Month
+              <input id="eventMonth" type="month" />
+            </label>
+            <label style="min-width:140px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
+              <input type="checkbox" id="eventAllMonths" />
+              Show all months
+            </label>
+            <label style="min-width:160px;">
+              Event Type
+              <select id="eventTypeFilter">
+                <option value="all">All types</option>
+                <option value="renewal">Renewal</option>
             <option value="termination">Termination</option>
             <option value="auto_opt_out">Auto opt-out</option>
             <option value="effective">Effective</option>
@@ -141,6 +152,68 @@
 
       <div class="muted small" id="eventsStatus" style="margin-top:4px"></div>
       <div id="eventsList" class="folder-list"></div>
+    </div>
+  </div>
+
+  <div id="plannerPage" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">Event Planner</h3>
+          <div class="muted small">Add or edit renewal timelines and events for any contract.</div>
+        </div>
+        <button id="plannerRefresh">Refresh</button>
+      </div>
+
+      <div class="row wrap filters" style="margin-top:12px; gap:12px;">
+        <label style="min-width:200px;">
+          Contract
+          <select id="plannerContract"></select>
+        </label>
+        <label style="min-width:140px;">
+          Event Type
+          <select id="plannerEventType">
+            <option value="renewal">Renewal</option>
+            <option value="termination">Termination</option>
+            <option value="effective">Effective</option>
+            <option value="auto_opt_out">Auto opt-out</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <label style="min-width:160px;">
+          Event Date
+          <input type="date" id="plannerEventDate" />
+        </label>
+        <label style="flex:1; min-width:200px;">
+          Custom Type (if chosen)
+          <input type="text" id="plannerCustomType" placeholder="e.g., Notice" />
+        </label>
+        <button id="plannerAdd">Add Event</button>
+      </div>
+
+      <div class="row wrap filters" style="margin-top:8px; gap:12px;">
+        <label style="min-width:160px;">
+          Show Month
+          <input type="month" id="plannerMonth" />
+        </label>
+        <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
+          <input type="checkbox" id="plannerAllMonths" />
+          Show all months
+        </label>
+      </div>
+
+      <div class="muted small" id="plannerStatus" style="margin-top:4px"></div>
+      <table style="width:100%; margin-top:10px; border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th>Contract</th>
+            <th>Type</th>
+            <th>Date</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="plannerTable"></tbody>
+      </table>
     </div>
   </div>
 
