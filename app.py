@@ -209,30 +209,6 @@ class ReminderUpdate(BaseModel):
     offsets: List[int] = Field(default_factory=lambda: [90, 60, 30, 7])
     enabled: bool = True
 
-    @staticmethod
-    def _coerce_int(value) -> Optional[int]:
-        """Best-effort conversion that tolerates strings like '30 days'."""
-        if value is None:
-            return None
-        if isinstance(value, bool):  # avoid treating bool as int
-            return None
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return None
-
-        # strings: extract the first integer-like token
-        try:
-            import re
-
-            match = re.search(r"-?\d+", str(value))
-            if match:
-                return int(match.group(0))
-        except Exception:
-            return None
-        return None
-
     @validator("recipients", pre=True)
     def normalize_recipients(cls, value):
         if value is None:
@@ -245,28 +221,18 @@ class ReminderUpdate(BaseModel):
 
     @validator("offsets", pre=True)
     def normalize_offsets(cls, value):
-        original = value
         if value is None:
             return []
         if isinstance(value, str):
-            value = value.replace(";", ",").split(",")
+            value = value.split(",")
         if isinstance(value, (list, tuple)):
             cleaned = []
             for v in value:
-                coerced = cls._coerce_int(v)
-                if coerced is None:
+                try:
+                    cleaned.append(int(v))
+                except (TypeError, ValueError):
                     continue
-                cleaned.append(coerced)
-            if cleaned:
-                return cleaned
-        # Fallback: extract any integers from the raw string representation (e.g., "30days")
-        try:
-            import re
-
-            matches = re.findall(r"-?\d+", str(original))
-            return [int(m) for m in matches] if matches else []
-        except Exception:
-            return []
+            return cleaned
         return []
 
 
