@@ -245,6 +245,7 @@ class ReminderUpdate(BaseModel):
 
     @validator("offsets", pre=True)
     def normalize_offsets(cls, value):
+        original = value
         if value is None:
             return []
         if isinstance(value, str):
@@ -256,7 +257,16 @@ class ReminderUpdate(BaseModel):
                 if coerced is None:
                     continue
                 cleaned.append(coerced)
-            return cleaned
+            if cleaned:
+                return cleaned
+        # Fallback: extract any integers from the raw string representation (e.g., "30days")
+        try:
+            import re
+
+            matches = re.findall(r"-?\d+", str(original))
+            return [int(m) for m in matches] if matches else []
+        except Exception:
+            return []
         return []
 
 
