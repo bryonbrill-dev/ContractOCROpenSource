@@ -54,6 +54,7 @@
   <div class="nav">
     <button id="navContracts" class="active">Contracts</button>
     <button id="navEvents">Events</button>
+    <button id="navPlanner">Planner</button>
   </div>
 
   <div id="contractsPage">
@@ -141,6 +142,20 @@
 
       <div class="muted small" id="eventsStatus" style="margin-top:4px"></div>
       <div id="eventsList" class="folder-list"></div>
+    </div>
+  </div>
+
+  <div id="plannerPage" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">Planner</h3>
+          <div class="muted small">Review all contracts and add key events or reminders for future planning.</div>
+        </div>
+        <button id="plannerRefresh">Refresh</button>
+      </div>
+      <div class="muted small" style="margin-top:6px">Use the inline form to add or update events and reminder recipients.</div>
+      <div id="plannerList" class="folder-list" style="margin-top:12px"></div>
     </div>
   </div>
 

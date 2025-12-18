@@ -14,9 +14,39 @@ from dateutil import parser as dtparser
 logger = logging.getLogger("contractocr")
 
 KEYWORDS = {
-    "effective_date": ["effective date", "effective as of", "effective on", "commencement"],
-    "renewal_date": ["renewal date", "renews on", "renewed on", "term ends", "expires on", "expiration date"],
-    "termination_date": ["termination date", "terminates on", "end date", "expires on", "expiration date"],
+    "effective_date": [
+        "effective date",
+        "effective as of",
+        "effective on",
+        "commencement",
+        "commencement date",
+        "agreement date",
+        "start date",
+        "execution date",
+    ],
+    "renewal_date": [
+        "renewal date",
+        "renews on",
+        "renewed on",
+        "term ends",
+        "expires on",
+        "expiration date",
+        "renewal term begins",
+        "renewal term start",
+        "renewal term date",
+        "renewal effective",
+        "initial term ends",
+    ],
+    "termination_date": [
+        "termination date",
+        "terminates on",
+        "end date",
+        "expires on",
+        "expiration date",
+        "end of term",
+        "termination of this agreement",
+        "this agreement shall expire",
+    ],
     "automatic_renewal": ["auto renew", "automatically renew", "renews automatically", "auto-renew"],
     "auto_renew_opt_out_days": ["written notice", "notice", "days prior", "days before", "prior to renewal"],
     "governing_law": ["governed by the laws of", "governing law", "jurisdiction"],
@@ -74,9 +104,20 @@ def _find_best_date_near(text: str, keywords: List[str]) -> Tuple[Optional[str],
                         conf += 0.10
                     conf = min(conf, 0.95)
                     cand = (iso, conf, ch[:350], None)
-                    best = cand if best is None else (cand if cand[1] > best[1] else best)
+            best = cand if best is None else (cand if cand[1] > best[1] else best)
     if best:
         return best
+    return None, 0.0, None, None
+
+
+def _fallback_first_date(text: str) -> Tuple[Optional[str], float, Optional[str], Optional[int]]:
+    for pat in DATE_PATTERNS:
+        m = re.search(pat, text, flags=re.IGNORECASE)
+        if m:
+            iso = _parse_date(m.group(0))
+            if iso:
+                snippet = text[max(m.start() - 40, 0): m.end() + 40]
+                return iso, 0.55, snippet[:350], None
     return None, 0.0, None, None
 
 def _find_opt_out_days(text: str) -> Tuple[Optional[int], float, Optional[str], Optional[int]]:
@@ -216,6 +257,13 @@ def process_contract(
     ter, ter_conf, ter_snip, ter_page = _find_best_date_near(ocr_all, KEYWORDS["termination_date"])
     opt_days, opt_conf, opt_snip, opt_page = _find_opt_out_days(ocr_all)
     law, law_conf, law_snip, law_page = _find_governing_law(ocr_all)
+
+    if not eff:
+        eff, eff_conf, eff_snip, eff_page = _fallback_first_date(ocr_all)
+    if not ren:
+        ren, ren_conf, ren_snip, ren_page = _fallback_first_date(ocr_all)
+    if not ter:
+        ter, ter_conf, ter_snip, ter_page = _fallback_first_date(ocr_all)
 
     with _db(db_path) as conn:
         if eff:

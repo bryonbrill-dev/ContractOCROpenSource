@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from dateutil import parser as dtparser
 
 load_dotenv()
 
@@ -175,6 +176,27 @@ def safe_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in keep).strip()[:180] or "upload.bin"
 
 
+def parse_date_to_iso(date_str: str) -> str:
+    try:
+        dt = dtparser.parse(date_str, fuzzy=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {date_str}")
+    return dt.date().isoformat()
+
+
+def normalize_bool(value: str) -> str:
+    truthy = {"true", "1", "yes", "y", "enabled", "on"}
+    return "true" if str(value).strip().lower() in truthy else "false"
+
+
+TERM_EVENT_MAP = {
+    "effective_date": "effective",
+    "renewal_date": "renewal",
+    "termination_date": "termination",
+    "auto_renew_opt_out_date": "auto_opt_out",
+}
+
+
 def init_db():
     with db() as conn:
         conn.executescript(SCHEMA_SQL)
@@ -225,6 +247,32 @@ class TagCreate(BaseModel):
 
 class TagUpdate(BaseModel):
     name: Optional[str] = None
+    color: Optional[str] = None
+
+
+class ContractUpdate(BaseModel):
+    title: Optional[str] = None
+    vendor: Optional[str] = None
+    agreement_type: Optional[str] = None
+
+
+class TermUpsert(BaseModel):
+    term_key: str
+    value: str
+    status: str = "manual"
+    source_page: Optional[int] = None
+    source_snippet: Optional[str] = None
+
+
+class EventCreate(BaseModel):
+    event_type: str
+    event_date: str
+    derived_from_term_key: Optional[str] = None
+    reminder: Optional[ReminderUpdate] = None
+
+
+class TagAttach(BaseModel):
+    name: str
     color: Optional[str] = None
 
 # ----------------------------
@@ -455,12 +503,87 @@ def detect_agreement_type(ocr_text: str, filename: str) -> str:
         return "Order Form"
     return "Uncategorized"
 
+
+def _upsert_contract_fts(conn: sqlite3.Connection, contract_id: str, title: Optional[str], vendor: Optional[str]) -> None:
+    existing = conn.execute(
+        "SELECT contract_id FROM contracts_fts WHERE contract_id = ?",
+        (contract_id,),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE contracts_fts SET title = COALESCE(?, title), vendor = COALESCE(?, vendor) WHERE contract_id = ?",
+            (title, vendor, contract_id),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO contracts_fts (contract_id, title, vendor, ocr_text) VALUES (?, ?, ?, '')",
+            (contract_id, title or "", vendor or ""),
+        )
+
+
+def _ensure_event_for_term(conn: sqlite3.Connection, contract_id: str, term_key: str, event_date_iso: str) -> Optional[str]:
+    event_type = TERM_EVENT_MAP.get(term_key)
+    if not event_type:
+        return None
+
+    existing = conn.execute(
+        """
+        SELECT id FROM events
+        WHERE contract_id = ? AND derived_from_term_key = ?
+        """,
+        (contract_id, term_key),
+    ).fetchone()
+
+    if existing:
+        conn.execute(
+            "UPDATE events SET event_type = ?, event_date = ? WHERE id = ?",
+            (event_type, event_date_iso, existing["id"]),
+        )
+        return existing["id"]
+
+    event_id = str(uuid.uuid4())
+    conn.execute(
+        """
+        INSERT INTO events (id, contract_id, event_type, event_date, derived_from_term_key, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (event_id, contract_id, event_type, event_date_iso, term_key, now_iso()),
+    )
+    return event_id
+
+
+def _normalize_term_value(value: str, value_type: str) -> str:
+    if value_type == "date":
+        return parse_date_to_iso(value)
+    if value_type == "int":
+        try:
+            return str(int(value))
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid integer: {value}")
+    if value_type == "bool":
+        return normalize_bool(value)
+    return value
+
 # ----------------------------
 # Agreement types / Tags endpoints
 # ----------------------------
 @app.get("/api/agreement-types")
 def get_agreement_types():
     return AGREEMENT_TYPES
+
+
+@app.get("/api/term-definitions")
+def get_term_definitions():
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, name, key, value_type, enabled, priority
+            FROM term_definitions
+            WHERE enabled = 1
+            ORDER BY priority ASC, name ASC
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 @app.get("/api/tags")
@@ -725,6 +848,82 @@ def list_contracts(
 
         return result
 
+
+@app.get("/api/contracts-with-events")
+def contracts_with_events(limit: int = 200):
+    limit = max(1, min(limit, 500))
+    with db() as conn:
+        contracts = conn.execute(
+            """
+            SELECT id, title, vendor, agreement_type, uploaded_at, status
+            FROM contracts
+            ORDER BY uploaded_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+        ids = [c["id"] for c in contracts]
+        events_map: Dict[str, List[Dict[str, Any]]] = {cid: [] for cid in ids}
+        tags_map: Dict[str, List[Dict[str, Any]]] = {cid: [] for cid in ids}
+
+        if ids:
+            qmarks = ",".join("?" for _ in ids)
+            events = conn.execute(
+                f"""
+                SELECT * FROM events
+                WHERE contract_id IN ({qmarks})
+                ORDER BY event_date ASC
+                """,
+                tuple(ids),
+            ).fetchall()
+
+            reminder_map: Dict[str, Dict[str, Any]] = {}
+            for ev in events:
+                rs = conn.execute(
+                    "SELECT * FROM reminder_settings WHERE event_id = ?",
+                    (ev["id"],),
+                ).fetchone()
+                reminder_map[ev["id"]] = None
+                if rs:
+                    reminder_map[ev["id"]] = {
+                        "enabled": bool(rs["enabled"]),
+                        "recipients": rs["recipients"].split(","),
+                        "offsets": json.loads(rs["offsets_json"]),
+                    }
+
+            for ev in events:
+                events_map[ev["contract_id"]].append({**dict(ev), "reminder": reminder_map.get(ev["id"])})
+
+            tag_rows = conn.execute(
+                f"""
+                SELECT ct.contract_id, t.id, t.name, t.color, ct.auto_generated
+                FROM contract_tags ct
+                JOIN tags t ON t.id = ct.tag_id
+                WHERE ct.contract_id IN ({qmarks})
+                """,
+                tuple(ids),
+            ).fetchall()
+
+            for row in tag_rows:
+                tags_map[row["contract_id"]].append(
+                    {
+                        "id": row["id"],
+                        "name": row["name"],
+                        "color": row["color"],
+                        "auto_generated": row["auto_generated"],
+                    }
+                )
+
+        return [
+            {
+                **dict(c),
+                "events": events_map.get(c["id"], []),
+                "tags": tags_map.get(c["id"], []),
+            }
+            for c in contracts
+        ]
+
 # ----------------------------
 # Contract detail
 # ----------------------------
@@ -785,6 +984,185 @@ def get_contract(contract_id: str):
             "tags": [dict(t) for t in tags],
             "reminders": reminder_map,
         }
+
+
+@app.put("/api/contracts/{contract_id}")
+def update_contract(contract_id: str, payload: ContractUpdate):
+    with db() as conn:
+        c = conn.execute("SELECT * FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+        if not c:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        fields = []
+        params: List[Any] = []
+
+        if payload.title:
+            fields.append("title = ?")
+            params.append(payload.title)
+        if payload.vendor:
+            fields.append("vendor = ?")
+            params.append(payload.vendor)
+        if payload.agreement_type:
+            if payload.agreement_type not in AGREEMENT_TYPES:
+                raise HTTPException(status_code=400, detail="Invalid agreement_type")
+            fields.append("agreement_type = ?")
+            params.append(payload.agreement_type)
+
+        if fields:
+            params.append(contract_id)
+            conn.execute(
+                f"UPDATE contracts SET {', '.join(fields)} WHERE id = ?",
+                tuple(params),
+            )
+            _upsert_contract_fts(conn, contract_id, payload.title, payload.vendor)
+
+    return {"contract_id": contract_id, "updated": bool(fields)}
+
+
+@app.post("/api/contracts/{contract_id}/terms/upsert")
+def upsert_term(contract_id: str, payload: TermUpsert):
+    with db() as conn:
+        contract = conn.execute("SELECT id FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+        if not contract:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        term_def = conn.execute(
+            "SELECT key, value_type FROM term_definitions WHERE key = ? AND enabled = 1",
+            (payload.term_key,),
+        ).fetchone()
+        if not term_def:
+            raise HTTPException(status_code=400, detail="Unknown term_key")
+
+        normalized = _normalize_term_value(payload.value, term_def["value_type"])
+
+        conn.execute(
+            "DELETE FROM term_instances WHERE contract_id = ? AND term_key = ?",
+            (contract_id, payload.term_key),
+        )
+        conn.execute(
+            """
+            INSERT INTO term_instances (
+              contract_id, term_key, value_raw, value_normalized,
+              confidence, status, source_page, source_snippet, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                contract_id,
+                payload.term_key,
+                payload.value,
+                normalized,
+                0.95 if payload.status == "manual" else 0.75,
+                payload.status,
+                payload.source_page,
+                payload.source_snippet,
+                now_iso(),
+            ),
+        )
+
+        event_id = None
+        if term_def["value_type"] == "date":
+            event_id = _ensure_event_for_term(conn, contract_id, payload.term_key, normalized)
+
+    return {
+        "contract_id": contract_id,
+        "term_key": payload.term_key,
+        "value": payload.value,
+        "value_normalized": normalized,
+        "event_id": event_id,
+    }
+
+
+@app.post("/api/contracts/{contract_id}/events")
+def create_event(contract_id: str, payload: EventCreate):
+    event_date_iso = parse_date_to_iso(payload.event_date)
+
+    with db() as conn:
+        contract = conn.execute("SELECT id FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+        if not contract:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        existing = conn.execute(
+            """
+            SELECT id FROM events
+            WHERE contract_id = ? AND event_type = ? AND (derived_from_term_key = ? OR derived_from_term_key IS NULL)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (contract_id, payload.event_type, payload.derived_from_term_key),
+        ).fetchone()
+
+        if existing:
+            event_id = existing["id"]
+            conn.execute(
+                "UPDATE events SET event_date = ?, derived_from_term_key = ? WHERE id = ?",
+                (event_date_iso, payload.derived_from_term_key, event_id),
+            )
+        else:
+            event_id = str(uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO events (id, contract_id, event_type, event_date, derived_from_term_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    contract_id,
+                    payload.event_type,
+                    event_date_iso,
+                    payload.derived_from_term_key,
+                    now_iso(),
+                ),
+            )
+
+        if payload.reminder:
+            reminder = _normalize_reminder(payload.reminder)
+            _upsert_reminder(conn, event_id, reminder)
+
+    return {
+        "contract_id": contract_id,
+        "event_id": event_id,
+        "event_type": payload.event_type,
+        "event_date": event_date_iso,
+        "derived_from_term_key": payload.derived_from_term_key,
+    }
+
+
+@app.post("/api/contracts/{contract_id}/tags/custom")
+def attach_custom_tag(contract_id: str, payload: TagAttach):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Tag name is required")
+
+    with db() as conn:
+        contract = conn.execute("SELECT id FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+        if not contract:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        existing_tag = conn.execute(
+            "SELECT id, color FROM tags WHERE lower(name) = lower(?)",
+            (name,),
+        ).fetchone()
+
+        if existing_tag:
+            tag_id = existing_tag["id"]
+            color = existing_tag["color"]
+        else:
+            color = payload.color or "#3b82f6"
+            cur = conn.execute(
+                "INSERT INTO tags (name, color, created_at) VALUES (?, ?, ?)",
+                (name, color, now_iso()),
+            )
+            tag_id = cur.lastrowid
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO contract_tags (contract_id, tag_id, auto_generated, created_at)
+            VALUES (?, ?, 0, ?)
+            """,
+            (contract_id, tag_id, now_iso()),
+        )
+
+    return {"contract_id": contract_id, "tag": {"id": tag_id, "name": name, "color": color}}
 
 
 @app.get("/api/contracts/{contract_id}/status")
@@ -970,8 +1348,7 @@ def search(
 # ----------------------------
 # Reminders
 # ----------------------------
-@app.put("/api/events/{event_id}/reminders")
-def update_reminders(event_id: str, payload: ReminderUpdate):
+def _normalize_reminder(payload: ReminderUpdate) -> Dict[str, Any]:
     offsets = sorted(set(int(x) for x in payload.offsets if int(x) > 0))
     if not offsets:
         raise HTTPException(
@@ -984,6 +1361,34 @@ def update_reminders(event_id: str, payload: ReminderUpdate):
             status_code=400, detail="recipients cannot be empty"
         )
 
+    return {"offsets": offsets, "recipients": recipients, "enabled": bool(payload.enabled)}
+
+
+def _upsert_reminder(conn: sqlite3.Connection, event_id: str, reminder: Dict[str, Any]) -> None:
+    conn.execute(
+        """
+        INSERT INTO reminder_settings (event_id, recipients, offsets_json, enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(event_id) DO UPDATE SET
+          recipients = excluded.recipients,
+          offsets_json = excluded.offsets_json,
+          enabled = excluded.enabled,
+          updated_at = excluded.updated_at
+        """,
+        (
+            event_id,
+            ",".join(reminder["recipients"]),
+            json.dumps(reminder["offsets"]),
+            1 if reminder["enabled"] else 0,
+            now_iso(),
+        ),
+    )
+
+
+@app.put("/api/events/{event_id}/reminders")
+def update_reminders(event_id: str, payload: ReminderUpdate):
+    reminder = _normalize_reminder(payload)
+
     with db() as conn:
         ev = conn.execute(
             "SELECT id FROM events WHERE id = ?", (event_id,)
@@ -991,30 +1396,13 @@ def update_reminders(event_id: str, payload: ReminderUpdate):
         if not ev:
             raise HTTPException(status_code=404, detail="Event not found")
 
-        conn.execute(
-            """
-            INSERT INTO reminder_settings (event_id, recipients, offsets_json, enabled, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(event_id) DO UPDATE SET
-              recipients = excluded.recipients,
-              offsets_json = excluded.offsets_json,
-              enabled = excluded.enabled,
-              updated_at = excluded.updated_at
-            """,
-            (
-                event_id,
-                ",".join(recipients),
-                json.dumps(offsets),
-                1 if payload.enabled else 0,
-                now_iso(),
-            ),
-        )
+        _upsert_reminder(conn, event_id, reminder)
 
     return {
         "event_id": event_id,
-        "recipients": recipients,
-        "offsets": offsets,
-        "enabled": payload.enabled,
+        "recipients": reminder["recipients"],
+        "offsets": reminder["offsets"],
+        "enabled": reminder["enabled"],
     }
 
 # ----------------------------
