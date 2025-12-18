@@ -180,6 +180,26 @@ def init_db():
         conn.executescript(SCHEMA_SQL)
         conn.executescript(SEED_TERMS_SQL)
         conn.executescript(SEED_TAGS_SQL)
+ codex/complete-app.py-file-implementation-cqhjwh
+        _apply_migrations(conn)
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """Apply simple, idempotent schema migrations for existing databases."""
+
+    def has_column(table: str, column: str) -> bool:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(r["name"].lower() == column.lower() for r in rows)
+
+    if not has_column("contracts", "agreement_type"):
+        conn.execute(
+            "ALTER TABLE contracts ADD COLUMN agreement_type TEXT"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contracts_agreement_type ON contracts(agreement_type)"
+        )
+=======
+ main
 
 # ----------------------------
 # Models
