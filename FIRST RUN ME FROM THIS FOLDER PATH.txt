@@ -1,0 +1,75 @@
+RUN THE BELOW COMMAND FIRST!:
+
+cd C:\ContractsOCR\Workarea
+py -m venv .venv
+.\.venv\Scripts\activate
+uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+
+THEN RUN AND INSTALL THE DEPENDENCIES BELOW:
+
+pip install -r requirements.txt
+
+
+THEN VERIFY THE PATHS IN APP.PY are correct!:
+
+
+DB_PATH = os.environ.get(
+    "CONTRACT_DB",
+    r"C:\ContractsOCR\data\contracts.db"
+)
+
+DATA_ROOT = os.environ.get(
+    "CONTRACT_DATA",
+    r"C:\ContractsOCR\data\originals"
+)
+
+WHILE BEING INSIDE OF THE (.venv) Activated environment Chosen run the below:
+
+uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+
+
+To confirm the API is online visit: http://localhost:8080/docs
+
+Also to confirm API fetching perform locally in powershell: get http://localhost:8080/api/events?month=2025-12
+
+
+Health Checks can be done here: http://localhost:8080/api/notifications  you will see [] and nothing else.
+
+Sanity CHECKS can be done this way with a contract_id call to the API: sanity check:
+
+Copy that contract_id
+
+Hit:
+
+GET http://localhost:8080/api/contracts/<contract_id>
+OR
+CURL http://localhost:8080/api/contracts/<contract_id>
+126c46a3-721f-4914-a808-0d66920d3166
+
+Confirm it returns the contract object (terms/events empty for now, which is expected until OCR/extraction is wired in)
+
+Now begin to install the OCR and dependencies for the extraction Pipeline:
+
+::::::Inside of your activated venv command run the below::::::
+
+pip install pytesseract pdf2image pillow python-dateutil pypdf
+
+
+Checking the possible status values and their importance: 
+
+| Status       | Meaning                                    |
+| ------------ | ------------------------------------------ |
+| `processing` | File uploaded, OCR/extraction running      |
+| `processed`  | OCR/extraction finished successfully       |
+| `error`      | OCR or parsing failed                      |
+| `uploaded`   | (optional future state) waiting to process |
+
+
+
+INSTALL TESSERACT to C:\Program Files\Tesseract-OCR\  from here: https://github.com/UB-Mannheim/tesseract/wiki or here: https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe
+AND VC_Redist from here: https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+
+
+
+

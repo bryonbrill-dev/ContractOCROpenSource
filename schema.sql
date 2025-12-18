@@ -1,0 +1,164 @@
+PRAGMA foreign_keys = ON;
+
+-- =========================
+-- Contracts + file storage
+-- =========================
+CREATE TABLE IF NOT EXISTS contracts (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL,
+  vendor          TEXT,
+  agreement_type  TEXT,                       -- NEW: Addendum, Amendment, etc.
+  original_filename TEXT NOT NULL,
+  sha256          TEXT NOT NULL,
+  stored_path     TEXT NOT NULL,
+  mime_type       TEXT NOT NULL,
+  pages           INTEGER DEFAULT 0,
+  uploaded_at     TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'processed'
+);
+
+CREATE INDEX IF NOT EXISTS idx_contracts_uploaded_at ON contracts(uploaded_at);
+CREATE INDEX IF NOT EXISTS idx_contracts_vendor ON contracts(vendor);
+CREATE INDEX IF NOT EXISTS idx_contracts_agreement_type ON contracts(agreement_type);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_contracts_sha256 ON contracts(sha256);
+
+-- =========================
+-- Tags
+-- =========================
+CREATE TABLE IF NOT EXISTS tags (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  color         TEXT DEFAULT '#3b82f6',
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contract_tags (
+  contract_id   TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  auto_generated INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  PRIMARY KEY (contract_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contract_tags_contract ON contract_tags(contract_id);
+CREATE INDEX IF NOT EXISTS idx_contract_tags_tag ON contract_tags(tag_id);
+
+-- =========================
+-- Tag keywords (for auto-generation)
+-- =========================
+CREATE TABLE IF NOT EXISTS tag_keywords (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  keyword       TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tag_keywords_tag ON tag_keywords(tag_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_tag_keywords_tag_keyword ON tag_keywords(tag_id, keyword);
+
+-- =========================
+-- OCR text (per page)
+-- =========================
+CREATE TABLE IF NOT EXISTS ocr_pages (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id   TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  page_number   INTEGER NOT NULL,
+  text          TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ocr_pages_contract_page ON ocr_pages(contract_id, page_number);
+
+-- =========================
+-- Term taxonomy (pre-defined catalog)
+-- =========================
+CREATE TABLE IF NOT EXISTS term_definitions (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL UNIQUE,
+  key            TEXT NOT NULL UNIQUE,
+  value_type     TEXT NOT NULL,
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  priority       INTEGER NOT NULL DEFAULT 100,
+  extraction_hint TEXT,
+  created_at     TEXT NOT NULL
+);
+
+-- =========================
+-- Extracted term instances (per contract)
+-- =========================
+CREATE TABLE IF NOT EXISTS term_instances (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id     TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  term_key        TEXT NOT NULL REFERENCES term_definitions(key),
+  value_raw       TEXT,
+  value_normalized TEXT,
+  confidence      REAL NOT NULL DEFAULT 0.0,
+  status          TEXT NOT NULL DEFAULT 'smart',
+  source_page     INTEGER,
+  source_snippet  TEXT,
+  updated_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_term_instances_contract ON term_instances(contract_id);
+CREATE INDEX IF NOT EXISTS idx_term_instances_termkey ON term_instances(term_key);
+
+-- =========================
+-- Events (drives Month view + reminders)
+-- =========================
+CREATE TABLE IF NOT EXISTS events (
+  id            TEXT PRIMARY KEY,
+  contract_id   TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  event_type    TEXT NOT NULL,
+  event_date    TEXT NOT NULL,
+  derived_from_term_key TEXT,
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_date ON events(event_date);
+CREATE INDEX IF NOT EXISTS idx_events_contract ON events(contract_id);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+
+-- =========================
+-- Reminder settings (per event)
+-- =========================
+CREATE TABLE IF NOT EXISTS reminder_settings (
+  event_id      TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+  recipients    TEXT NOT NULL,
+  offsets_json  TEXT NOT NULL,
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reminder_sends (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id      TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  offset_days   INTEGER NOT NULL,
+  scheduled_for TEXT NOT NULL,
+  sent_at       TEXT,
+  status        TEXT NOT NULL,
+  error         TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_reminder_sends_unique
+  ON reminder_sends(event_id, offset_days, scheduled_for);
+
+-- =========================
+-- Job runs
+-- =========================
+CREATE TABLE IF NOT EXISTS job_runs (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_name     TEXT NOT NULL,
+  started_at   TEXT NOT NULL,
+  finished_at  TEXT,
+  status       TEXT NOT NULL,
+  detail       TEXT
+);
+
+-- =========================
+-- Full-text search (FTS5)
+-- =========================
+CREATE VIRTUAL TABLE IF NOT EXISTS contracts_fts USING fts5(
+  contract_id UNINDEXED,
+  title,
+  vendor,
+  ocr_text
+);

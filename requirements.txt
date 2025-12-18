@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pillow
+pytesseract
+pdf2image
+python-dateutil
+python-dotenv

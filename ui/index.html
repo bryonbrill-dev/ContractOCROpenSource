@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ContractOCR UI</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .row { display: flex; gap: 16px; }
+    .col { flex: 1; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+    .drop { border: 2px dashed #888; border-radius: 10px; padding: 18px; text-align: center; cursor: pointer; }
+    .drop.drag { background: #f3f6ff; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
+    .badge { padding: 3px 8px; border-radius: 999px; color: #fff; font-size: 12px; display: inline-block; }
+    .green { background: #2e7d32; }
+    .red { background: #c62828; }
+    .yellow { background: #b26a00; }
+    .muted { color: #666; font-size: 12px; }
+    input, button { padding: 8px; }
+    button { cursor: pointer; }
+    a { text-decoration: none; }
+    .small { font-size: 12px; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h2>ContractOCR</h2>
+
+  <div class="card">
+    <div class="small muted">API Base</div>
+    <input id="apiBase" style="width:360px" />
+    <button id="saveApi">Save</button>
+    <span class="muted small" id="apiStatus"></span>
+  </div>
+
+  <div class="row" style="margin-top:16px">
+    <div class="col">
+      <div class="card">
+        <h3 style="margin-top:0">Upload</h3>
+        <div id="drop" class="drop">Drag & drop PDF(s) here, or click to choose</div>
+        <input id="filePicker" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" style="display:none" />
+        <div id="uploadLog" class="small muted" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h3 style="margin:0">Recent Contracts</h3>
+          <button id="refresh">Refresh</button>
+        </div>
+        <div class="muted small" style="margin-top:6px">Green = processed, Red = error, Yellow = processing</div>
+        <table style="margin-top:10px">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Title</th>
+              <th>Uploaded</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="contracts"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card">
+        <h3 style="margin-top:0">Contract Detail</h3>
+        <div id="detail" class="muted">Click a contract to view terms/events.</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
