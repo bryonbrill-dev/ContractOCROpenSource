@@ -1,3 +1,5 @@
+"""Contract OCR & renewal tracker FastAPI application."""
+
 from processor import process_contract
 
 import os
@@ -14,13 +16,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 
-# Optional .env support (won't crash if not installed)
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+load_dotenv()
 
 # ----------------------------
 # Paths / config
@@ -28,9 +26,9 @@ except Exception:
 DB_PATH = os.environ.get("CONTRACT_DB", r"C:\ContractOCR\data\contracts.db")
 DATA_ROOT = os.environ.get("CONTRACT_DATA", r"C:\ContractOCR\data\originals")
 LOG_DIR = os.environ.get("CONTRACT_LOG", r"C:\ContractOCR\log")
-
-TESSERACT_CMD = os.environ.get("TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
-# IMPORTANT: this must be the folder containing pdfinfo.exe + pdftoppm.exe
+TESSERACT_CMD = os.environ.get(
+    "TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+)
 POPPLER_PATH = os.environ.get("POPPLER_PATH", r"C:\poppler-25.12.0\Library\bin")
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -51,24 +49,108 @@ if not logger.handlers:
     fh.setFormatter(fmt)
     logger.addHandler(fh)
 
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
+
 # ----------------------------
-# FastAPI + CORS
+# App + CORS
 # ----------------------------
 app = FastAPI(title="Contract OCR & Renewal Tracker")
 
-# UI runs on :3000, API runs on :8080
-CORS_ORIGINS = os.environ.get(
-    "CORS_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,http://192.168.149.8:3000"
-).split(",")
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in CORS_ORIGINS if o.strip()],
-    allow_credentials=False,
+    allow_origins=["*"],  # adjust to specific origins if desired
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ----------------------------
+# Agreement types (LinkSquares-style)
+# ----------------------------
+AGREEMENT_TYPES = [
+    "Addendum",
+    "Amendment",
+    "Assignment",
+    "Business Associate Agreement",
+    "Certificate of Insurance",
+    "CNDA",
+    "Consent Agreement",
+    "Consulting Agreement",
+    "Contract Agreement",
+    "Corporate Agreement",
+    "Data Agreement",
+    "Employment Agreement",
+    "Financial Agreement",
+    "Letter",
+    "Master Agreement",
+    "Mutual Non Disclosure Agreement",
+    "Non Disclosure Agreement",
+    "Order Form",
+    "Property Agreement",
+    "Publishing Agreement",
+    "Reference",
+    "Release Agreement",
+    "Requisition Document",
+    "Sales Agreement",
+    "Service Agreement",
+    "Statement of Work",
+    "Terms and Conditions",
+    "Uncategorized",
+]
+
+# ----------------------------
+# Startup / Shutdown / Middleware
+# ----------------------------
+@app.on_event("startup")
+def _startup():
+    logger.info(f"APP START pid={os.getpid()}")
+    logger.info(f"POPPLER_PATH: {POPPLER_PATH}")
+    logger.info(f"TESSERACT_CMD: {TESSERACT_CMD}")
+
+    if not os.path.exists(TESSERACT_CMD):
+        logger.error(f"Tesseract not found at: {TESSERACT_CMD}")
+
+    if POPPLER_PATH:
+        pdfinfo = os.path.join(POPPLER_PATH, "pdfinfo.exe")
+        pdftoppm = os.path.join(POPPLER_PATH, "pdftoppm.exe")
+        if not os.path.exists(pdfinfo):
+            logger.error(f"pdfinfo.exe not found at: {pdfinfo}")
+        if not os.path.exists(pdftoppm):
+            logger.error(f"pdftoppm.exe not found at: {pdftoppm}")
+
+    init_db()
+    logger.info("APP READY")
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    logger.info("APP SHUTDOWN")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = datetime.utcnow()
+    try:
+        response = await call_next(request)
+        ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+        logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({ms}ms)")
+        return response
+    except Exception:
+        ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+        logger.error(
+            f"{request.method} {request.url.path} -> 500 ({ms}ms)\n{traceback.format_exc()}"
+        )
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(
+        f"UNHANDLED EXCEPTION {request.method} {request.url.path}\n{traceback.format_exc()}"
+    )
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 # ----------------------------
 # DB helpers
@@ -79,116 +161,177 @@ def db() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
+
 def now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
 
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
+
 def safe_filename(name: str) -> str:
     keep = "._- ()[]{}"
-    return "".join(c for c in (name or "") if c.isalnum() or c in keep).strip()[:180] or "upload.bin"
+    return "".join(c for c in name if c.isalnum() or c in keep).strip()[:180] or "upload.bin"
+
+
+def init_db():
+    with db() as conn:
+        conn.executescript(SCHEMA_SQL)
+        conn.executescript(SEED_TERMS_SQL)
+        conn.executescript(SEED_TAGS_SQL)
 
 # ----------------------------
-# Schema + seed (embedded)
+# Models
+# ----------------------------
+SearchMode = Literal["quick", "terms", "fulltext"]
+
+
+class ReminderUpdate(BaseModel):
+    recipients: List[str] = Field(..., min_items=1)
+    offsets: List[int] = Field(default_factory=lambda: [90, 60, 30, 7])
+    enabled: bool = True
+
+
+class UploadResponse(BaseModel):
+    contract_id: str
+    title: str
+    stored_path: str
+    sha256: str
+    status: str
+
+
+class TagCreate(BaseModel):
+    name: str
+    color: str = "#3b82f6"
+
+
+class TagUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+# ----------------------------
+# Schema + seed (inline)
 # ----------------------------
 SCHEMA_SQL = r"""
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS contracts (
-  id              TEXT PRIMARY KEY,
-  title           TEXT NOT NULL,
-  vendor          TEXT,
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  vendor TEXT,
+  agreement_type TEXT,
   original_filename TEXT NOT NULL,
-  sha256          TEXT NOT NULL,
-  stored_path     TEXT NOT NULL,
-  mime_type       TEXT NOT NULL,
-  pages           INTEGER DEFAULT 0,
-  uploaded_at     TEXT NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'processed'
+  sha256 TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  pages INTEGER DEFAULT 0,
+  uploaded_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'processed'
 );
-
 CREATE INDEX IF NOT EXISTS idx_contracts_uploaded_at ON contracts(uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_contracts_vendor ON contracts(vendor);
+CREATE INDEX IF NOT EXISTS idx_contracts_agreement_type ON contracts(agreement_type);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_contracts_sha256 ON contracts(sha256);
 
+CREATE TABLE IF NOT EXISTS tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  color TEXT DEFAULT '#3b82f6',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contract_tags (
+  contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  auto_generated INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (contract_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS tag_keywords (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  keyword TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tag_keywords_tag ON tag_keywords(tag_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_tag_keywords_tag_keyword ON tag_keywords(tag_id, keyword);
+
 CREATE TABLE IF NOT EXISTS ocr_pages (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  contract_id   TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-  page_number   INTEGER NOT NULL,
-  text          TEXT NOT NULL,
-  created_at    TEXT NOT NULL
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  page_number INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_ocr_pages_contract_page ON ocr_pages(contract_id, page_number);
 
 CREATE TABLE IF NOT EXISTS term_definitions (
-  id             TEXT PRIMARY KEY,
-  name           TEXT NOT NULL UNIQUE,
-  key            TEXT NOT NULL UNIQUE,
-  value_type     TEXT NOT NULL,
-  enabled        INTEGER NOT NULL DEFAULT 1,
-  priority       INTEGER NOT NULL DEFAULT 100,
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  key TEXT NOT NULL UNIQUE,
+  value_type TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  priority INTEGER NOT NULL DEFAULT 100,
   extraction_hint TEXT,
-  created_at     TEXT NOT NULL
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS term_instances (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  contract_id     TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-  term_key        TEXT NOT NULL REFERENCES term_definitions(key),
-  value_raw       TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  term_key TEXT NOT NULL REFERENCES term_definitions(key),
+  value_raw TEXT,
   value_normalized TEXT,
-  confidence      REAL NOT NULL DEFAULT 0.0,
-  status          TEXT NOT NULL DEFAULT 'smart',
-  source_page     INTEGER,
-  source_snippet  TEXT,
-  updated_at      TEXT NOT NULL
+  confidence REAL NOT NULL DEFAULT 0.0,
+  status TEXT NOT NULL DEFAULT 'smart',
+  source_page INTEGER,
+  source_snippet TEXT,
+  updated_at TEXT NOT NULL
 );
-
 CREATE INDEX IF NOT EXISTS idx_term_instances_contract ON term_instances(contract_id);
 CREATE INDEX IF NOT EXISTS idx_term_instances_termkey ON term_instances(term_key);
 
 CREATE TABLE IF NOT EXISTS events (
-  id            TEXT PRIMARY KEY,
-  contract_id   TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-  event_type    TEXT NOT NULL,
-  event_date    TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  event_date TEXT NOT NULL,
   derived_from_term_key TEXT,
-  created_at    TEXT NOT NULL
+  created_at TEXT NOT NULL
 );
-
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(event_date);
 CREATE INDEX IF NOT EXISTS idx_events_contract ON events(contract_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 
 CREATE TABLE IF NOT EXISTS reminder_settings (
-  event_id      TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
-  recipients    TEXT NOT NULL,
-  offsets_json  TEXT NOT NULL,
-  enabled       INTEGER NOT NULL DEFAULT 1,
-  updated_at    TEXT NOT NULL
+  event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+  recipients TEXT NOT NULL,
+  offsets_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS reminder_sends (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id      TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  offset_days   INTEGER NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  offset_days INTEGER NOT NULL,
   scheduled_for TEXT NOT NULL,
-  sent_at       TEXT,
-  status        TEXT NOT NULL,
-  error         TEXT
+  sent_at TEXT,
+  status TEXT NOT NULL,
+  error TEXT
 );
-
 CREATE UNIQUE INDEX IF NOT EXISTS ux_reminder_sends_unique
   ON reminder_sends(event_id, offset_days, scheduled_for);
 
 CREATE TABLE IF NOT EXISTS job_runs (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_name     TEXT NOT NULL,
-  started_at   TEXT NOT NULL,
-  finished_at  TEXT,
-  status       TEXT NOT NULL,
-  detail       TEXT
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_name TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  detail TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS contracts_fts USING fts5(
@@ -200,8 +343,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS contracts_fts USING fts5(
 """
 
 SEED_TERMS_SQL = r"""
-INSERT OR IGNORE INTO term_definitions (id, name, key, value_type, enabled, priority, extraction_hint, created_at)
-VALUES
+INSERT OR IGNORE INTO term_definitions (id, name, key, value_type, enabled, priority, extraction_hint, created_at) VALUES
   (lower(hex(randomblob(16))), 'Effective Date', 'effective_date', 'date', 1, 10, 'effective date; effective as of; commencement', datetime('now')),
   (lower(hex(randomblob(16))), 'Renewal Date', 'renewal_date', 'date', 1, 20, 'renewal date; renews on; term ends', datetime('now')),
   (lower(hex(randomblob(16))), 'Termination Date', 'termination_date', 'date', 1, 30, 'termination date; terminates on; expires on', datetime('now')),
@@ -212,60 +354,164 @@ VALUES
   (lower(hex(randomblob(16))), 'Payment Terms', 'payment_terms', 'text', 1, 90, 'payment; due; net 30; invoice', datetime('now'));
 """
 
-def init_db():
+SEED_TAGS_SQL = r"""
+INSERT OR IGNORE INTO tags (name, color, created_at) VALUES
+  ('Confidential', '#ef4444', datetime('now')),
+  ('Auto-Renew', '#f97316', datetime('now')),
+  ('High-Value', '#eab308', datetime('now')),
+  ('Vendor', '#3b82f6', datetime('now')),
+  ('Customer', '#8b5cf6', datetime('now')),
+  ('Insurance', '#ec4899', datetime('now')),
+  ('Real Estate', '#06b6d4', datetime('now')),
+  ('Employment', '#10b981', datetime('now')),
+  ('Expiring Soon', '#dc2626', datetime('now'));
+
+INSERT OR IGNORE INTO tag_keywords (tag_id, keyword, created_at)
+SELECT id, 'confidential', datetime('now') FROM tags WHERE name = 'Confidential'
+UNION ALL SELECT id, 'non-disclosure', datetime('now') FROM tags WHERE name = 'Confidential'
+UNION ALL SELECT id, 'nda', datetime('now') FROM tags WHERE name = 'Confidential'
+UNION ALL SELECT id, 'proprietary', datetime('now') FROM tags WHERE name = 'Confidential'
+UNION ALL SELECT id, 'automatic renewal', datetime('now') FROM tags WHERE name = 'Auto-Renew'
+UNION ALL SELECT id, 'auto-renew', datetime('now') FROM tags WHERE name = 'Auto-Renew'
+UNION ALL SELECT id, 'automatically renews', datetime('now') FROM tags WHERE name = 'Auto-Renew'
+UNION ALL SELECT id, 'insurance', datetime('now') FROM tags WHERE name = 'Insurance'
+UNION ALL SELECT id, 'certificate of insurance', datetime('now') FROM tags WHERE name = 'Insurance'
+UNION ALL SELECT id, 'liability coverage', datetime('now') FROM tags WHERE name = 'Insurance'
+UNION ALL SELECT id, 'lease', datetime('now') FROM tags WHERE name = 'Real Estate'
+UNION ALL SELECT id, 'real estate', datetime('now') FROM tags WHERE name = 'Real Estate'
+UNION ALL SELECT id, 'property', datetime('now') FROM tags WHERE name = 'Real Estate'
+UNION ALL SELECT id, 'premises', datetime('now') FROM tags WHERE name = 'Real Estate'
+UNION ALL SELECT id, 'employment', datetime('now') FROM tags WHERE name = 'Employment'
+UNION ALL SELECT id, 'employee', datetime('now') FROM tags WHERE name = 'Employment'
+UNION ALL SELECT id, 'offer letter', datetime('now') FROM tags WHERE name = 'Employment';
+"""
+
+# ----------------------------
+# Tag + agreement helpers
+# ----------------------------
+def auto_tag_contract(contract_id: str, ocr_text: str):
     with db() as conn:
-        conn.executescript(SCHEMA_SQL)
-        conn.executescript(SEED_TERMS_SQL)
+        rows = conn.execute(
+            """
+            SELECT t.id as tag_id, tk.keyword
+            FROM tags t
+            JOIN tag_keywords tk ON tk.tag_id = t.id
+            """
+        ).fetchall()
 
-@app.on_event("startup")
-def _startup():
-    logger.info(f"APP START pid={os.getpid()}")
-    init_db()
-    logger.info("APP READY")
+        ocr_lower = ocr_text.lower()
+        for row in rows:
+            if row["keyword"].lower() in ocr_lower:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO contract_tags (contract_id, tag_id, auto_generated, created_at)
+                    VALUES (?, ?, 1, ?)
+                    """,
+                    (contract_id, row["tag_id"], now_iso()),
+                )
 
-@app.on_event("shutdown")
-def _shutdown():
-    logger.info("APP STOP")
+
+def detect_agreement_type(ocr_text: str, filename: str) -> str:
+    text_lower = (ocr_text + " " + filename).lower()
+
+    if "non-disclosure" in text_lower or "nda" in text_lower or "confidential" in text_lower:
+        if "mutual" in text_lower:
+            return "Mutual Non Disclosure Agreement"
+        return "Non Disclosure Agreement"
+    if "employment" in text_lower or "offer letter" in text_lower:
+        return "Employment Agreement"
+    if "service agreement" in text_lower or "services agreement" in text_lower:
+        return "Service Agreement"
+    if "statement of work" in text_lower or "sow" in text_lower:
+        return "Statement of Work"
+    if "master agreement" in text_lower or "msa" in text_lower:
+        return "Master Agreement"
+    if "addendum" in text_lower:
+        return "Addendum"
+    if "amendment" in text_lower:
+        return "Amendment"
+    if "consulting" in text_lower:
+        return "Consulting Agreement"
+    if "certificate of insurance" in text_lower:
+        return "Certificate of Insurance"
+    if "order form" in text_lower or "purchase order" in text_lower:
+        return "Order Form"
+    return "Uncategorized"
 
 # ----------------------------
-# Request logging middleware
+# Agreement types / Tags endpoints
 # ----------------------------
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    started = datetime.utcnow()
-    try:
-        response = await call_next(request)
-        ms = int((datetime.utcnow() - started).total_seconds() * 1000)
-        logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({ms}ms)")
-        return response
-    except Exception as e:
-        ms = int((datetime.utcnow() - started).total_seconds() * 1000)
-        logger.error(f"UNHANDLED {request.method} {request.url.path} -> 500 ({ms}ms) | {e}")
-        logger.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"detail": str(e)})
+@app.get("/api/agreement-types")
+def get_agreement_types():
+    return AGREEMENT_TYPES
 
-# ----------------------------
-# Models
-# ----------------------------
-SearchMode = Literal["quick", "terms", "fulltext"]
 
-class ReminderUpdate(BaseModel):
-    recipients: List[str] = Field(..., min_items=1)
-    offsets: List[int] = Field(default_factory=lambda: [90, 60, 30, 7])
-    enabled: bool = True
+@app.get("/api/tags")
+def list_tags():
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM tags ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
 
-class UploadResponse(BaseModel):
-    contract_id: str
-    title: str
-    stored_path: str
-    sha256: str
-    status: str
+
+@app.post("/api/tags")
+def create_tag(tag: TagCreate):
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO tags (name, color, created_at) VALUES (?, ?, ?)",
+            (tag.name, tag.color, now_iso()),
+        )
+        return {"name": tag.name, "color": tag.color}
+
+
+@app.put("/api/tags/{tag_id}")
+def update_tag(tag_id: int, tag: TagUpdate):
+    with db() as conn:
+        if tag.name:
+            conn.execute("UPDATE tags SET name = ? WHERE id = ?", (tag.name, tag_id))
+        if tag.color:
+            conn.execute("UPDATE tags SET color = ? WHERE id = ?", (tag.color, tag_id))
+        return {"tag_id": tag_id}
+
+
+@app.delete("/api/tags/{tag_id}")
+def delete_tag(tag_id: int):
+    with db() as conn:
+        conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+        return {"deleted": tag_id}
+
+
+@app.post("/api/contracts/{contract_id}/tags/{tag_id}")
+def add_tag_to_contract(contract_id: str, tag_id: int):
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO contract_tags (contract_id, tag_id, auto_generated, created_at)
+            VALUES (?, ?, 0, ?)
+            """,
+            (contract_id, tag_id, now_iso()),
+        )
+        return {"contract_id": contract_id, "tag_id": tag_id}
+
+
+@app.delete("/api/contracts/{contract_id}/tags/{tag_id}")
+def remove_tag_from_contract(contract_id: str, tag_id: int):
+    with db() as conn:
+        conn.execute(
+            "DELETE FROM contract_tags WHERE contract_id = ? AND tag_id = ?",
+            (contract_id, tag_id),
+        )
+        return {"contract_id": contract_id, "tag_id": tag_id}
 
 # ----------------------------
 # Upload
 # ----------------------------
 @app.post("/api/contracts/upload", response_model=UploadResponse)
-async def upload_contract(file: UploadFile = File(...), title: Optional[str] = None, vendor: Optional[str] = None):
+async def upload_contract(
+    file: UploadFile = File(...),
+    title: Optional[str] = None,
+    vendor: Optional[str] = None,
+    agreement_type: Optional[str] = None,
+):
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -273,9 +519,10 @@ async def upload_contract(file: UploadFile = File(...), title: Optional[str] = N
     file_hash = sha256_bytes(data)
     fn = safe_filename(file.filename or "upload.bin")
 
-    # Duplicate check
     with db() as conn:
-        existing = conn.execute("SELECT * FROM contracts WHERE sha256 = ?", (file_hash,)).fetchone()
+        existing = conn.execute(
+            "SELECT * FROM contracts WHERE sha256 = ?", (file_hash,)
+        ).fetchone()
         if existing:
             logger.info(f"DUPLICATE FILE contract_id={existing['id']} filename={fn}")
             return UploadResponse(
@@ -299,15 +546,20 @@ async def upload_contract(file: UploadFile = File(...), title: Optional[str] = N
 
     contract_title = title or os.path.splitext(fn)[0]
 
-    # Insert contract row + placeholder FTS entry
     with db() as conn:
         conn.execute(
-            """INSERT INTO contracts (id, title, vendor, original_filename, sha256, stored_path, mime_type, uploaded_at, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """
+            INSERT INTO contracts (
+              id, title, vendor, agreement_type,
+              original_filename, sha256, stored_path,
+              mime_type, uploaded_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
                 contract_id,
                 contract_title,
                 vendor,
+                agreement_type,
                 fn,
                 file_hash,
                 stored_path,
@@ -321,10 +573,10 @@ async def upload_contract(file: UploadFile = File(...), title: Optional[str] = N
             (contract_id, contract_title, vendor or "", ""),
         )
 
-    # Process (OCR + extraction)
     logger.info(f"PROCESS START contract_id={contract_id} file={fn}")
+
     try:
-        process_contract(
+        result = process_contract(
             db_path=DB_PATH,
             contract_id=contract_id,
             stored_path=stored_path,
@@ -332,10 +584,21 @@ async def upload_contract(file: UploadFile = File(...), title: Optional[str] = N
             max_pages=8,
             poppler_path=POPPLER_PATH,
         )
-        with db() as conn:
-            conn.execute("UPDATE contracts SET status='processed' WHERE id=?", (contract_id,))
-        logger.info(f"PROCESS SUCCESS contract_id={contract_id}")
 
+        ocr_text = result.get("ocr_text", "")
+
+        if not agreement_type:
+            agreement_type = detect_agreement_type(ocr_text, fn)
+
+        with db() as conn:
+            conn.execute(
+                "UPDATE contracts SET status='processed', agreement_type=? WHERE id=?",
+                (agreement_type, contract_id),
+            )
+
+        auto_tag_contract(contract_id, ocr_text)
+
+        logger.info(f"PROCESS SUCCESS contract_id={contract_id}")
         return UploadResponse(
             contract_id=contract_id,
             title=contract_title,
@@ -345,19 +608,105 @@ async def upload_contract(file: UploadFile = File(...), title: Optional[str] = N
         )
 
     except Exception as e:
+        error_msg = f"{type(e).__name__}: {str(e)}"
         with db() as conn:
             conn.execute("UPDATE contracts SET status='error' WHERE id=?", (contract_id,))
-        logger.error(f"PROCESS FAILED contract_id={contract_id} | {e}")
-        logger.error(traceback.format_exc())
-
-        # KISS: return 200 with status=error so UI can mark red
-        return UploadResponse(
-            contract_id=contract_id,
-            title=contract_title,
-            stored_path=stored_path,
-            sha256=file_hash,
-            status="error",
+        logger.error(
+            f"PROCESS FAILED contract_id={contract_id} filename={fn} | {error_msg}\n{traceback.format_exc()}"
         )
+        raise HTTPException(
+            status_code=500, detail=f"Processing failed: {error_msg}"
+        )
+
+# ----------------------------
+# Calendar events endpoint
+# ----------------------------
+@app.get("/api/calendar/events")
+def get_calendar_events(start: str, end: str):
+    """Get events for calendar view (start and end are YYYY-MM-DD)"""
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.*, c.title, c.vendor, c.agreement_type
+            FROM events e
+            JOIN contracts c ON c.id = e.contract_id
+            WHERE e.event_date >= ? AND e.event_date <= ?
+            ORDER BY e.event_date ASC
+            """,
+            (start, end),
+        ).fetchall()
+
+        events = []
+        for r in rows:
+            tags = conn.execute(
+                """
+                SELECT t.name, t.color
+                FROM contract_tags ct
+                JOIN tags t ON t.id = ct.tag_id
+                WHERE ct.contract_id = ?
+                """,
+                (r["contract_id"],),
+            ).fetchall()
+
+            events.append(
+                {
+                    **dict(r),
+                    "tags": [{"name": t["name"], "color": t["color"]} for t in tags],
+                }
+            )
+
+        return events
+
+# ----------------------------
+# List contracts
+# ----------------------------
+@app.get("/api/contracts")
+def list_contracts(
+    limit: int = 50,
+    status: Optional[str] = None,
+    agreement_type: Optional[str] = None,
+):
+    with db() as conn:
+        where_clauses = []
+        params: List[Any] = []
+
+        if status:
+            where_clauses.append("status = ?")
+            params.append(status)
+        if agreement_type:
+            where_clauses.append("agreement_type = ?")
+            params.append(agreement_type)
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        params.append(limit)
+
+        rows = conn.execute(
+            f"""
+            SELECT id, title, vendor, agreement_type,
+                   original_filename, status, pages, uploaded_at, sha256
+            FROM contracts
+            WHERE {where_sql}
+            ORDER BY uploaded_at DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+
+        result = []
+        for r in rows:
+            tags = conn.execute(
+                """
+                SELECT t.id, t.name, t.color, ct.auto_generated
+                FROM contract_tags ct
+                JOIN tags t ON t.id = ct.tag_id
+                WHERE ct.contract_id = ?
+                """,
+                (r["id"],),
+            ).fetchall()
+
+            result.append({**dict(r), "tags": [dict(t) for t in tags]})
+
+        return result
 
 # ----------------------------
 # Contract detail
@@ -365,16 +714,20 @@ async def upload_contract(file: UploadFile = File(...), title: Optional[str] = N
 @app.get("/api/contracts/{contract_id}")
 def get_contract(contract_id: str):
     with db() as conn:
-        c = conn.execute("SELECT * FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+        c = conn.execute(
+            "SELECT * FROM contracts WHERE id = ?", (contract_id,)
+        ).fetchone()
         if not c:
             raise HTTPException(status_code=404, detail="Contract not found")
 
         terms = conn.execute(
-            """SELECT ti.*, td.name, td.value_type
-               FROM term_instances ti
-               JOIN term_definitions td ON td.key = ti.term_key
-               WHERE ti.contract_id = ?
-               ORDER BY td.priority ASC""",
+            """
+            SELECT ti.*, td.name, td.value_type
+            FROM term_instances ti
+            JOIN term_definitions td ON td.key = ti.term_key
+            WHERE ti.contract_id = ?
+            ORDER BY td.priority ASC
+            """,
             (contract_id,),
         ).fetchall()
 
@@ -383,22 +736,53 @@ def get_contract(contract_id: str):
             (contract_id,),
         ).fetchall()
 
+        tags = conn.execute(
+            """
+            SELECT t.id, t.name, t.color, ct.auto_generated
+            FROM contract_tags ct
+            JOIN tags t ON t.id = ct.tag_id
+            WHERE ct.contract_id = ?
+            """,
+            (contract_id,),
+        ).fetchall()
+
+        reminder_map: Dict[str, Any] = {}
+        for ev in events:
+            rs = conn.execute(
+                "SELECT * FROM reminder_settings WHERE event_id = ?", (ev["id"],)
+            ).fetchone()
+            if rs:
+                reminder_map[ev["id"]] = {
+                    "enabled": bool(rs["enabled"]),
+                    "recipients": rs["recipients"].split(","),
+                    "offsets": json.loads(rs["offsets_json"]),
+                    "updated_at": rs["updated_at"],
+                }
+            else:
+                reminder_map[ev["id"]] = None
+
         return {
             "contract": dict(c),
             "terms": [dict(t) for t in terms],
             "events": [dict(e) for e in events],
+            "tags": [dict(t) for t in tags],
+            "reminders": reminder_map,
         }
+
 
 @app.get("/api/contracts/{contract_id}/status")
 def get_contract_status(contract_id: str):
     with db() as conn:
-        c = conn.execute("SELECT id, status FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+        c = conn.execute(
+            "SELECT id, status, pages FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
         if not c:
             raise HTTPException(status_code=404, detail="Contract not found")
         return dict(c)
 
 # ----------------------------
-# View original / download
+# View / download
 # ----------------------------
 @app.get("/api/contracts/{contract_id}/original")
 def view_original(contract_id: str):
@@ -409,11 +793,14 @@ def view_original(contract_id: str):
         ).fetchone()
         if not c:
             raise HTTPException(status_code=404, detail="Contract not found")
-
     if not os.path.exists(c["stored_path"]):
         raise HTTPException(status_code=404, detail="File missing on disk")
+    return FileResponse(
+        c["stored_path"],
+        media_type=c["mime_type"],
+        filename=c["original_filename"],
+    )
 
-    return FileResponse(c["stored_path"], media_type=c["mime_type"], filename=c["original_filename"])
 
 @app.get("/api/contracts/{contract_id}/download")
 def download_contract(contract_id: str):
@@ -424,22 +811,26 @@ def download_contract(contract_id: str):
         ).fetchone()
         if not c:
             raise HTTPException(status_code=404, detail="Contract not found")
-
     if not os.path.exists(c["stored_path"]):
         raise HTTPException(status_code=404, detail="File missing on disk")
-
     return FileResponse(
         c["stored_path"],
         media_type=c["mime_type"],
         filename=c["original_filename"],
-        headers={"Content-Disposition": f'attachment; filename="{c["original_filename"]}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{c["original_filename"]}"'
+        },
     )
 
 # ----------------------------
-# Events API (month view)
+# Month Events API (month grid)
 # ----------------------------
 @app.get("/api/events")
 def list_events(month: str, event_type: str = "all", sort: str = "date_asc"):
+    """
+    month: 'YYYY-MM'
+    event_type: 'all' | 'renewal' | 'effective' | 'termination' | 'auto_opt_out' etc.
+    """
     try:
         y, m = month.split("-")
         y = int(y)
@@ -449,7 +840,7 @@ def list_events(month: str, event_type: str = "all", sort: str = "date_asc"):
     except Exception:
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
-    params = [start.isoformat(), end.isoformat()]
+    params: List[Any] = [start.isoformat(), end.isoformat()]
     where = "WHERE e.event_date >= ? AND e.event_date < ?"
     if event_type != "all":
         where += " AND e.event_type = ?"
@@ -465,21 +856,43 @@ def list_events(month: str, event_type: str = "all", sort: str = "date_asc"):
 
     with db() as conn:
         rows = conn.execute(
-            f"""SELECT e.*, c.title, c.vendor
-                FROM events e
-                JOIN contracts c ON c.id = e.contract_id
-                {where}
-                {order}""",
+            f"""
+            SELECT e.*, c.title, c.vendor, c.agreement_type
+            FROM events e
+            JOIN contracts c ON c.id = e.contract_id
+            {where}
+            {order}
+            """,
             tuple(params),
         ).fetchall()
 
-    return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            rs = conn.execute(
+                "SELECT * FROM reminder_settings WHERE event_id = ?", (r["id"],)
+            ).fetchone()
+            reminder = None
+            if rs:
+                offsets = sorted(json.loads(rs["offsets_json"]))
+                reminder = {
+                    "enabled": bool(rs["enabled"]),
+                    "offsets": offsets,
+                    "recipients": rs["recipients"].split(","),
+                }
+            out.append({**dict(r), "reminder": reminder})
+
+        return out
 
 # ----------------------------
-# Search API (recent contracts list)
+# Search API
 # ----------------------------
 @app.get("/api/search")
-def search(mode: SearchMode, q: str = "", term_key: Optional[str] = None, limit: int = 100):
+def search(
+    mode: SearchMode,
+    q: str = "",
+    term_key: Optional[str] = None,
+    limit: int = 50,
+):
     q = (q or "").strip()
     limit = max(1, min(limit, 200))
 
@@ -487,27 +900,36 @@ def search(mode: SearchMode, q: str = "", term_key: Optional[str] = None, limit:
         if mode == "quick":
             like = f"%{q}%"
             rows = conn.execute(
-                """SELECT id, title, vendor, original_filename, uploaded_at, status
-                   FROM contracts
-                   WHERE title LIKE ? OR vendor LIKE ? OR original_filename LIKE ?
-                   ORDER BY uploaded_at DESC
-                   LIMIT ?""",
+                """
+                SELECT id, title, vendor, agreement_type,
+                       original_filename, uploaded_at, status
+                FROM contracts
+                WHERE title LIKE ? OR vendor LIKE ? OR original_filename LIKE ?
+                ORDER BY uploaded_at DESC
+                LIMIT ?
+                """,
                 (like, like, like, limit),
             ).fetchall()
             return [dict(r) for r in rows]
 
         if mode == "terms":
             if not term_key:
-                raise HTTPException(status_code=400, detail="term_key required for terms mode")
+                raise HTTPException(
+                    status_code=400, detail="term_key required for terms mode"
+                )
             like = f"%{q}%"
             rows = conn.execute(
-                """SELECT c.id, c.title, c.vendor, c.original_filename, ti.term_key, ti.value_normalized, ti.status, ti.confidence
-                   FROM term_instances ti
-                   JOIN contracts c ON c.id = ti.contract_id
-                   WHERE ti.term_key = ?
-                     AND (ti.value_raw LIKE ? OR ti.value_normalized LIKE ?)
-                   ORDER BY ti.confidence DESC
-                   LIMIT ?""",
+                """
+                SELECT c.id, c.title, c.vendor, c.agreement_type,
+                       c.original_filename, ti.term_key,
+                       ti.value_normalized, ti.status, ti.confidence
+                FROM term_instances ti
+                JOIN contracts c ON c.id = ti.contract_id
+                WHERE ti.term_key = ?
+                  AND (ti.value_raw LIKE ? OR ti.value_normalized LIKE ?)
+                ORDER BY ti.confidence DESC
+                LIMIT ?
+                """,
                 (term_key, like, like, limit),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -516,11 +938,87 @@ def search(mode: SearchMode, q: str = "", term_key: Optional[str] = None, limit:
             return []
 
         rows = conn.execute(
-            """SELECT c.id, c.title, c.vendor, c.original_filename, c.uploaded_at
-               FROM contracts_fts f
-               JOIN contracts c ON c.id = f.contract_id
-               WHERE contracts_fts MATCH ?
-               LIMIT ?""",
+            """
+            SELECT c.id, c.title, c.vendor, c.agreement_type,
+                   c.original_filename, c.uploaded_at
+            FROM contracts_fts f
+            JOIN contracts c ON c.id = f.contract_id
+            WHERE contracts_fts MATCH ?
+            LIMIT ?
+            """,
             (q, limit),
         ).fetchall()
+        return [dict(r) for r in rows]
+
+# ----------------------------
+# Reminders
+# ----------------------------
+@app.put("/api/events/{event_id}/reminders")
+def update_reminders(event_id: str, payload: ReminderUpdate):
+    offsets = sorted(set(int(x) for x in payload.offsets if int(x) > 0))
+    if not offsets:
+        raise HTTPException(
+            status_code=400, detail="offsets must contain positive integers"
+        )
+
+    recipients = [r.strip() for r in payload.recipients if r.strip()]
+    if not recipients:
+        raise HTTPException(
+            status_code=400, detail="recipients cannot be empty"
+        )
+
+    with db() as conn:
+        ev = conn.execute(
+            "SELECT id FROM events WHERE id = ?", (event_id,)
+        ).fetchone()
+        if not ev:
+            raise HTTPException(status_code=404, detail="Event not found")
+
+        conn.execute(
+            """
+            INSERT INTO reminder_settings (event_id, recipients, offsets_json, enabled, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+              recipients = excluded.recipients,
+              offsets_json = excluded.offsets_json,
+              enabled = excluded.enabled,
+              updated_at = excluded.updated_at
+            """,
+            (
+                event_id,
+                ",".join(recipients),
+                json.dumps(offsets),
+                1 if payload.enabled else 0,
+                now_iso(),
+            ),
+        )
+
+    return {
+        "event_id": event_id,
+        "recipients": recipients,
+        "offsets": offsets,
+        "enabled": payload.enabled,
+    }
+
+# ----------------------------
+# In-app bell notifications
+# ----------------------------
+@app.get("/api/notifications")
+def notifications(window_days: int = 30):
+    window_days = max(1, min(window_days, 365))
+
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.*, c.title, c.vendor, c.agreement_type
+            FROM events e
+            JOIN contracts c ON c.id = e.contract_id
+            WHERE date(e.event_date) >= date('now')
+              AND date(e.event_date) <= date('now', ?)
+            ORDER BY e.event_date ASC
+            LIMIT 200
+            """,
+            (f"+{window_days} days",),
+        ).fetchall()
+
         return [dict(r) for r in rows]
