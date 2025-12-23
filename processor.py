@@ -14,9 +14,28 @@ from dateutil import parser as dtparser
 logger = logging.getLogger("contractocr")
 
 KEYWORDS = {
-    "effective_date": ["effective date", "effective as of", "effective on", "commencement"],
+    "effective_date": [
+        "effective date",
+        "effective as of",
+        "effective on",
+        "commencement",
+        "made and entered into",
+        "entered into",
+        "agreement is made",
+    ],
     "renewal_date": ["renewal date", "renews on", "renewed on", "term ends", "expires on", "expiration date", "renewal term"],
-    "termination_date": ["termination date", "terminates on", "end date", "expires on", "expiration date", "termination on"],
+    "termination_date": [
+        "termination date",
+        "terminates on",
+        "end date",
+        "expires on",
+        "expiration date",
+        "termination on",
+        "terminate on",
+        "terminated on",
+        "shall terminate",
+        "termination",
+    ],
     "automatic_renewal": ["auto renew", "automatically renew", "renews automatically", "auto-renew"],
     "auto_renew_opt_out_days": ["written notice", "notice", "days prior", "days before", "prior to renewal"],
     "termination_notice_days": ["terminate", "termination", "written notice", "notice"],
@@ -34,6 +53,9 @@ DATE_PATTERNS = [
 ]
 DAYS_PATTERN = r"\b(\d{1,3})\s+day(s)?\b"
 TERM_LENGTH_PATTERN = r"\b(?:(\d{1,3})|([a-z]+))\s*(?:\(\s*(\d{1,3})\s*\))?\s*(month|months|year|years)\b"
+DAY_OF_MONTH_YEAR_PATTERN = (
+    r"\bday\s+of\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,?\s+\d{4}\b"
+)
 WORD_NUMBER_MAP = {
     "one": 1,
     "two": 2,
@@ -155,12 +177,21 @@ def _find_termination_notice_days(text: str) -> Tuple[Optional[int], float, Opti
 def _find_agreement_date(text: str) -> Tuple[Optional[str], float, Optional[str], Optional[int]]:
     chunks = _split_chunks(text)
     best: Optional[Tuple[str, float, str, Optional[int]]] = None
+    prev_chunk: Optional[str] = None
     for ch in chunks:
         lc = ch.lower()
         if "made and entered into" in lc or "entered into" in lc or "day of" in lc:
             raw_dates: List[str] = []
             for pat in DATE_PATTERNS:
                 raw_dates.extend(re.findall(pat, ch, flags=re.IGNORECASE))
+            if not raw_dates and "day of" in lc:
+                month_year = re.search(DAY_OF_MONTH_YEAR_PATTERN, ch, flags=re.IGNORECASE)
+                if month_year:
+                    day_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", ch)
+                    if not day_match and prev_chunk:
+                        day_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", prev_chunk)
+                    if day_match:
+                        raw_dates.append(f"{day_match.group(1)} {month_year.group(0)}")
             for raw in raw_dates:
                 iso = _parse_date(raw)
                 if iso:
@@ -170,6 +201,7 @@ def _find_agreement_date(text: str) -> Tuple[Optional[str], float, Optional[str]
                     conf = min(conf, 0.95)
                     cand = (iso, conf, ch[:350], None)
                     best = cand if best is None else (cand if cand[1] > best[1] else best)
+        prev_chunk = ch
     if best:
         return best
     return None, 0.0, None, None
