@@ -96,7 +96,6 @@ def _find_best_date_near(text: str, keywords: List[str]) -> Tuple[Optional[str],
             raw_dates: List[str] = []
             for pat in DATE_PATTERNS:
                 raw_dates.extend(re.findall(pat, ch, flags=re.IGNORECASE))
-            cand: Optional[Tuple[str, float, str, Optional[int]]] = None
             for raw in raw_dates:
                 iso = _parse_date(raw)
                 if iso:
@@ -105,8 +104,8 @@ def _find_best_date_near(text: str, keywords: List[str]) -> Tuple[Optional[str],
                         conf += 0.10
                     conf = min(conf, 0.95)
                     cand = (iso, conf, ch[:350], None)
-            if cand:
-                best = cand if best is None else (cand if cand[1] > best[1] else best)
+                    if best is None or cand[1] > best[1]:
+                        best = cand
     if best:
         return best
     return None, 0.0, None, None
