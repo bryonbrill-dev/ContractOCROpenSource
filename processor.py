@@ -19,6 +19,7 @@ KEYWORDS = {
     "termination_date": ["termination date", "terminates on", "end date", "expires on", "expiration date"],
     "automatic_renewal": ["auto renew", "automatically renew", "renews automatically", "auto-renew"],
     "auto_renew_opt_out_days": ["written notice", "notice", "days prior", "days before", "prior to renewal"],
+    "termination_notice_days": ["terminate", "termination", "written notice", "notice"],
     "governing_law": ["governed by the laws of", "governing law", "jurisdiction"],
     "payment_terms": ["payment", "invoice", "due", "net ", "payment schedule"],
 }
@@ -27,6 +28,7 @@ DATE_PATTERNS = [
     r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
     r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b",
     r"\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}\b",
+    r"\b\d{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,?\s+\d{4}\b",
 ]
 DAYS_PATTERN = r"\b(\d{1,3})\s+day(s)?\b"
 
@@ -94,6 +96,47 @@ def _find_opt_out_days(text: str) -> Tuple[Optional[int], float, Optional[str], 
                 conf = min(conf, 0.90)
                 cand = (days, conf, ch[:350], None)
                 best = cand if best is None else (cand if cand[1] > best[1] else best)
+    if best:
+        return best
+    return None, 0.0, None, None
+
+def _find_termination_notice_days(text: str) -> Tuple[Optional[int], float, Optional[str], Optional[int]]:
+    chunks = _split_chunks(text)
+    best: Optional[Tuple[int, float, str, Optional[int]]] = None
+    for ch in chunks:
+        lc = ch.lower()
+        if "notice" in lc and any(k in lc for k in ["terminate", "termination"]):
+            m = re.search(DAYS_PATTERN, ch, flags=re.IGNORECASE)
+            if m:
+                days = int(m.group(1))
+                conf = 0.78
+                if "written notice" in lc:
+                    conf += 0.08
+                conf = min(conf, 0.90)
+                cand = (days, conf, ch[:350], None)
+                best = cand if best is None else (cand if cand[1] > best[1] else best)
+    if best:
+        return best
+    return None, 0.0, None, None
+
+def _find_agreement_date(text: str) -> Tuple[Optional[str], float, Optional[str], Optional[int]]:
+    chunks = _split_chunks(text)
+    best: Optional[Tuple[str, float, str, Optional[int]]] = None
+    for ch in chunks:
+        lc = ch.lower()
+        if "made and entered into" in lc or "entered into" in lc or "day of" in lc:
+            raw_dates: List[str] = []
+            for pat in DATE_PATTERNS:
+                raw_dates.extend(re.findall(pat, ch, flags=re.IGNORECASE))
+            for raw in raw_dates:
+                iso = _parse_date(raw)
+                if iso:
+                    conf = 0.86
+                    if "made and entered into" in lc:
+                        conf += 0.06
+                    conf = min(conf, 0.95)
+                    cand = (iso, conf, ch[:350], None)
+                    best = cand if best is None else (cand if cand[1] > best[1] else best)
     if best:
         return best
     return None, 0.0, None, None
@@ -212,9 +255,12 @@ def process_contract(
         _upsert_fts(conn, contract_id, ocr_all)
 
     eff, eff_conf, eff_snip, eff_page = _find_best_date_near(ocr_all, KEYWORDS["effective_date"])
+    if not eff:
+        eff, eff_conf, eff_snip, eff_page = _find_agreement_date(ocr_all)
     ren, ren_conf, ren_snip, ren_page = _find_best_date_near(ocr_all, KEYWORDS["renewal_date"])
     ter, ter_conf, ter_snip, ter_page = _find_best_date_near(ocr_all, KEYWORDS["termination_date"])
     opt_days, opt_conf, opt_snip, opt_page = _find_opt_out_days(ocr_all)
+    termination_notice_days, termination_notice_conf, termination_notice_snip, termination_notice_page = _find_termination_notice_days(ocr_all)
     law, law_conf, law_snip, law_page = _find_governing_law(ocr_all)
 
     with _db(db_path) as conn:
@@ -233,6 +279,9 @@ def process_contract(
         if opt_days is not None:
             _insert_term(conn, contract_id, "auto_renew_opt_out_days", str(opt_days), str(opt_days), opt_conf, _status_for(opt_conf), opt_page, opt_snip)
 
+        if termination_notice_days is not None:
+            _insert_term(conn, contract_id, "termination_notice_days", str(termination_notice_days), str(termination_notice_days), termination_notice_conf, _status_for(termination_notice_conf), termination_notice_page, termination_notice_snip)
+
         if ren and opt_days is not None:
             opt_date = _compute_opt_out_date(ren, opt_days)
             _insert_term(conn, contract_id, "auto_renew_opt_out_date", opt_date, opt_date, 0.95, "smart", None, "calculated: renewal_date - opt_out_days")
@@ -249,6 +298,7 @@ def process_contract(
         "renewal_date": ren,
         "termination_date": ter,
         "auto_renew_opt_out_days": opt_days,
+        "termination_notice_days": termination_notice_days,
         "auto_renew_opt_out_date": _compute_opt_out_date(ren, opt_days) if (ren and opt_days is not None) else None,
         "governing_law": law,
         "pages_ocrd": len(images),
