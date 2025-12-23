@@ -244,6 +244,7 @@ def process_contract(
         _set_contract_status(conn, contract_id, "processed")
 
     return {
+        "ocr_text": ocr_all,
         "effective_date": eff,
         "renewal_date": ren,
         "termination_date": ter,
