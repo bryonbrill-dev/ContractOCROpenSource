@@ -102,6 +102,12 @@ function termEventLabel(key) {
   return TERM_EVENT_MAP[key] || null;
 }
 
+function statusPill(status) {
+  const label = (status || "manual").toLowerCase();
+  const cls = `status-${label}`;
+  return `<span class="pill ${cls}">${label}</span>`;
+}
+
 function optionList(values, selectedValue) {
   return values
     .map((v) => `<option value="${v}" ${v === selectedValue ? "selected" : ""}>${v}</option>`)
@@ -166,6 +172,8 @@ function renderContractDetail(data) {
   const tags = data.tags || [];
   const reminders = data.reminders || {};
   const agreementType = c.agreement_type || "Uncategorized";
+  const termLookup = new Map(terms.map((t) => [t.term_key, t]));
+  const eventLookup = new Map(events.filter((e) => e.derived_from_term_key).map((e) => [e.derived_from_term_key, e]));
 
   const termOptions = state.definitions
     .map((d) => `<option value="${d.key}" data-type="${d.value_type}">${d.name}</option>`)
@@ -187,6 +195,15 @@ function renderContractDetail(data) {
         .join("")
     : `<div class="muted small">No tags yet.</div>`;
 
+  const termSummaryHtml = terms.length
+    ? terms
+        .map((t) => {
+          const value = t.value_normalized || t.value_raw || "";
+          return `<span class="pill ${`status-${(t.status || "manual").toLowerCase()}`}" title="${t.term_key}">${t.name || t.term_key}: ${value}</span>`;
+        })
+        .join(" ")
+    : `<div class="muted small">No extracted terms yet.</div>`;
+
   const termsHtml = terms.length
     ? terms
         .map(
@@ -198,7 +215,10 @@ function renderContractDetail(data) {
               <span class="muted small">${t.term_key}</span>
               ${termEventLabel(t.term_key) ? `<span class="pill">${termEventLabel(t.term_key)} event</span>` : ""}
             </div>
-            <div class="muted small">${(t.status || "").toUpperCase()} • ${(t.confidence ?? 0).toFixed(2)}</div>
+            <div class="inline">
+              ${statusPill(t.status)}
+              <span class="muted small">${(t.confidence ?? 0).toFixed(2)}</span>
+            </div>
           </div>
           <div class="row wrap" style="gap:8px; margin-top:6px;">
             <input class="muted-input term-value" type="text" value="${t.value_normalized || t.value_raw || ""}" />
@@ -223,7 +243,7 @@ function renderContractDetail(data) {
           <div class="section" data-event="${e.id}">
             <div class="inline" style="justify-content:space-between; width:100%;">
               <div>
-                <b>${e.event_type}</b>
+                ${eventTypePill(e.event_type)}
                 ${e.derived_from_term_key ? `<span class="pill">From ${e.derived_from_term_key}</span>` : ""}
               </div>
               <div class="muted small">${formatDate(e.event_date)}</div>
@@ -252,6 +272,10 @@ function renderContractDetail(data) {
     <div class="small muted">ID: ${c.id}</div>
     <div style="margin-top:8px">Status: ${badge(c.status)}</div>
     <div class="small muted" style="margin-top:4px;">Agreement Type: <span class="pill">${agreementType}</span></div>
+    <div class="section" style="margin-top:10px;">
+      <h4>Extracted Terms</h4>
+      <div class="row wrap" style="gap:6px;">${termSummaryHtml}</div>
+    </div>
 
     <div class="section">
       <h4>Contract Info</h4>
@@ -417,6 +441,22 @@ function renderContractDetail(data) {
     });
   });
 
+  function prefillTermForm() {
+    const termKey = $("newTermKey")?.value;
+    if (!termKey) return;
+    const term = termLookup.get(termKey);
+    const event = eventLookup.get(termKey);
+    $("newTermValue").value = term?.value_normalized || term?.value_raw || "";
+    $("newTermStatus").value = term?.status || "manual";
+    const eventType = event?.event_type || termEventLabel(termKey) || "";
+    $("newTermEventType").value = STANDARD_EVENT_TYPES.includes(eventType) ? eventType : "";
+    const termDate = term?.value_type === "date" ? term?.value_normalized : "";
+    $("newTermEventDate").value = event?.event_date?.slice(0, 10) || termDate || "";
+  }
+
+  $("newTermKey")?.addEventListener("change", prefillTermForm);
+  prefillTermForm();
+
   $("addTerm")?.addEventListener("click", async () => {
     const termKey = $("newTermKey").value;
     const value = $("newTermValue").value;
@@ -578,7 +618,8 @@ function initDropzone() {
 
 function eventTypePill(type) {
   const label = type || "event";
-  return `<span class="pill event-type">${label}</span>`;
+  const cls = type ? `event-${type}` : "";
+  return `<span class="pill event-type ${cls}">${label}</span>`;
 }
 
 function reminderText(reminder) {
