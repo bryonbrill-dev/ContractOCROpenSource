@@ -15,22 +15,55 @@ logger = logging.getLogger("contractocr")
 
 KEYWORDS = {
     "effective_date": ["effective date", "effective as of", "effective on", "commencement"],
-    "renewal_date": ["renewal date", "renews on", "renewed on", "term ends", "expires on", "expiration date"],
-    "termination_date": ["termination date", "terminates on", "end date", "expires on", "expiration date"],
+    "renewal_date": ["renewal date", "renews on", "renewed on", "term ends", "expires on", "expiration date", "renewal term"],
+    "termination_date": ["termination date", "terminates on", "end date", "expires on", "expiration date", "termination on"],
     "automatic_renewal": ["auto renew", "automatically renew", "renews automatically", "auto-renew"],
     "auto_renew_opt_out_days": ["written notice", "notice", "days prior", "days before", "prior to renewal"],
     "termination_notice_days": ["terminate", "termination", "written notice", "notice"],
     "governing_law": ["governed by the laws of", "governing law", "jurisdiction"],
     "payment_terms": ["payment", "invoice", "due", "net ", "payment schedule"],
+    "term_length": ["initial term", "term of", "term shall", "term will", "term is", "renewal term"],
 }
 
 DATE_PATTERNS = [
     r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
+    r"\b\d{4}-\d{2}-\d{2}\b",
     r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b",
     r"\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}\b",
     r"\b\d{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,?\s+\d{4}\b",
 ]
 DAYS_PATTERN = r"\b(\d{1,3})\s+day(s)?\b"
+TERM_LENGTH_PATTERN = r"\b(?:(\d{1,3})|([a-z]+))\s*(?:\(\s*(\d{1,3})\s*\))?\s*(month|months|year|years)\b"
+WORD_NUMBER_MAP = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+    "hundred": 100,
+}
 
 def now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
@@ -151,6 +184,50 @@ def _find_governing_law(text: str) -> Tuple[Optional[str], float, Optional[str],
             return tail[:200], 0.70, ch[:350], None
     return None, 0.0, None, None
 
+def _parse_term_length_match(match: re.Match) -> Optional[str]:
+    digit = match.group(1)
+    word = match.group(2)
+    paren_digit = match.group(3)
+    unit = match.group(4)
+
+    if digit:
+        count = int(digit)
+    elif paren_digit:
+        count = int(paren_digit)
+    elif word:
+        count = WORD_NUMBER_MAP.get(word.lower())
+    else:
+        return None
+
+    if not count or count <= 0:
+        return None
+
+    unit_norm = "year" if unit.lower().startswith("year") else "month"
+    unit_label = unit_norm if count == 1 else f"{unit_norm}s"
+    return f"{count} {unit_label}"
+
+def _find_term_length(text: str) -> Tuple[Optional[str], float, Optional[str], Optional[int]]:
+    chunks = _split_chunks(text)
+    best: Optional[Tuple[str, float, str, Optional[int]]] = None
+    for ch in chunks:
+        lc = ch.lower()
+        if any(k in lc for k in KEYWORDS["term_length"]):
+            for match in re.finditer(TERM_LENGTH_PATTERN, ch, flags=re.IGNORECASE):
+                normalized = _parse_term_length_match(match)
+                if not normalized:
+                    continue
+                conf = 0.70
+                if "initial term" in lc:
+                    conf += 0.10
+                if "renewal term" in lc:
+                    conf += 0.05
+                conf = min(conf, 0.90)
+                cand = (normalized, conf, ch[:350], None)
+                best = cand if best is None else (cand if cand[1] > best[1] else best)
+    if best:
+        return best
+    return None, 0.0, None, None
+
 def _set_contract_status(conn: sqlite3.Connection, contract_id: str, status: str) -> None:
     conn.execute("UPDATE contracts SET status = ? WHERE id = ?", (status, contract_id))
 
@@ -216,7 +293,7 @@ def process_contract(
     contract_id: str,
     stored_path: str,
     tesseract_cmd: str,
-    max_pages: int = 8,
+    max_pages: int = 150,
     dpi: int = 250,
     poppler_path: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -262,6 +339,7 @@ def process_contract(
     opt_days, opt_conf, opt_snip, opt_page = _find_opt_out_days(ocr_all)
     termination_notice_days, termination_notice_conf, termination_notice_snip, termination_notice_page = _find_termination_notice_days(ocr_all)
     law, law_conf, law_snip, law_page = _find_governing_law(ocr_all)
+    term_length, term_length_conf, term_length_snip, term_length_page = _find_term_length(ocr_all)
 
     with _db(db_path) as conn:
         if eff:
@@ -290,6 +368,9 @@ def process_contract(
         if law:
             _insert_term(conn, contract_id, "governing_law", law, law, law_conf, _status_for(law_conf), law_page, law_snip)
 
+        if term_length:
+            _insert_term(conn, contract_id, "term_length", term_length, term_length, term_length_conf, _status_for(term_length_conf), term_length_page, term_length_snip)
+
         _set_contract_status(conn, contract_id, "processed")
 
     return {
@@ -301,5 +382,6 @@ def process_contract(
         "termination_notice_days": termination_notice_days,
         "auto_renew_opt_out_date": _compute_opt_out_date(ren, opt_days) if (ren and opt_days is not None) else None,
         "governing_law": law,
+        "term_length": term_length,
         "pages_ocrd": len(images),
     }

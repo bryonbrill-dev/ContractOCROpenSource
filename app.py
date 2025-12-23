@@ -428,7 +428,8 @@ INSERT OR IGNORE INTO term_definitions (id, name, key, value_type, enabled, prio
   (lower(hex(randomblob(16))), 'Auto-Renew Opt-Out Date (calculated)', 'auto_renew_opt_out_date', 'date', 1, 60, 'calculated from renewal date - opt-out days', datetime('now')),
   (lower(hex(randomblob(16))), 'Termination Notice Days', 'termination_notice_days', 'int', 1, 70, 'terminate; termination; written notice', datetime('now')),
   (lower(hex(randomblob(16))), 'Governing Law', 'governing_law', 'text', 1, 80, 'governed by the laws of', datetime('now')),
-  (lower(hex(randomblob(16))), 'Payment Terms', 'payment_terms', 'text', 1, 90, 'payment; due; net 30; invoice', datetime('now'));
+  (lower(hex(randomblob(16))), 'Payment Terms', 'payment_terms', 'text', 1, 90, 'payment; due; net 30; invoice', datetime('now')),
+  (lower(hex(randomblob(16))), 'Term Length', 'term_length', 'text', 1, 95, 'initial term; term of; term shall be', datetime('now'));
 """
 
 SEED_TAGS_SQL = r"""
