@@ -763,9 +763,9 @@ function renderContractDetail(data) {
         .map((o) => o.trim())
         .filter(Boolean)
         .map((o) => Number.parseInt(o, 10))
-        .filter((n) => Number.isFinite(n) && n > 0);
+        .filter((n) => Number.isFinite(n) && n >= 0);
       if (!offsets.length) {
-        await showAlert("Offsets must include at least one positive integer.", {
+        await showAlert("Offsets must include at least one non-negative integer.", {
           title: "Invalid reminder offsets",
         });
         return;

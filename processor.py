@@ -22,6 +22,9 @@ KEYWORDS = {
         "made and entered into",
         "entered into",
         "agreement is made",
+        "agreement date",
+        "date of this agreement",
+        "date of agreement",
     ],
     "renewal_date": ["renewal date", "renews on", "renewed on", "term ends", "expires on", "expiration date", "renewal term"],
     "termination_date": [
@@ -180,7 +183,14 @@ def _find_agreement_date(text: str) -> Tuple[Optional[str], float, Optional[str]
     prev_chunk: Optional[str] = None
     for ch in chunks:
         lc = ch.lower()
-        if "made and entered into" in lc or "entered into" in lc or "day of" in lc:
+        if (
+            "made and entered into" in lc
+            or "entered into" in lc
+            or "day of" in lc
+            or "agreement date" in lc
+            or "date of this agreement" in lc
+            or "date of agreement" in lc
+        ):
             raw_dates: List[str] = []
             for pat in DATE_PATTERNS:
                 raw_dates.extend(re.findall(pat, ch, flags=re.IGNORECASE))
