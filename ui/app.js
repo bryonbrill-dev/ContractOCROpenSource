@@ -20,6 +20,91 @@ const TERM_EVENT_MAP = {
   auto_renew_opt_out_date: "auto_opt_out",
 };
 const STANDARD_EVENT_TYPES = ["renewal", "termination", "effective", "auto_opt_out"];
+const modalState = { resolver: null, showCancel: false };
+
+function getModalElements() {
+  return {
+    overlay: $("modalOverlay"),
+    title: $("modalTitle"),
+    message: $("modalMessage"),
+    confirm: $("modalConfirm"),
+    cancel: $("modalCancel"),
+    close: $("modalClose"),
+  };
+}
+
+function closeModal(result) {
+  const { overlay } = getModalElements();
+  if (overlay) {
+    overlay.classList.add("hidden");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+  if (modalState.resolver) {
+    modalState.resolver(result);
+    modalState.resolver = null;
+    modalState.showCancel = false;
+  }
+}
+
+function openModal({ title, message, confirmText = "OK", cancelText = "Cancel", showCancel = false }) {
+  const { overlay, title: titleEl, message: messageEl, confirm, cancel } = getModalElements();
+  if (!overlay || !titleEl || !messageEl || !confirm || !cancel) {
+    return Promise.resolve(showCancel ? window.confirm(message) : (alert(message), true));
+  }
+
+  titleEl.textContent = title || (showCancel ? "Confirm action" : "Notice");
+  messageEl.textContent = message || "";
+  confirm.textContent = confirmText;
+  cancel.textContent = cancelText;
+  cancel.classList.toggle("hidden", !showCancel);
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+
+  modalState.showCancel = showCancel;
+
+  return new Promise((resolve) => {
+    modalState.resolver = resolve;
+    confirm.focus();
+  });
+}
+
+function showConfirm(message, options = {}) {
+  return openModal({
+    title: options.title || "Confirm action",
+    message,
+    confirmText: options.confirmText || "Confirm",
+    cancelText: options.cancelText || "Cancel",
+    showCancel: true,
+  });
+}
+
+function showAlert(message, options = {}) {
+  return openModal({
+    title: options.title || "Notice",
+    message,
+    confirmText: options.confirmText || "OK",
+    showCancel: false,
+  });
+}
+
+function initModal() {
+  const { overlay, confirm, cancel, close } = getModalElements();
+  if (!overlay || !confirm || !cancel || !close) return;
+
+  confirm.addEventListener("click", () => closeModal(true));
+  cancel.addEventListener("click", () => closeModal(false));
+  close.addEventListener("click", () => closeModal(false));
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      closeModal(!modalState.showCancel);
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !overlay.classList.contains("hidden")) {
+      closeModal(!modalState.showCancel);
+    }
+  });
+}
 
 function getApiBase() {
   return localStorage.getItem("apiBase") || "http://localhost:8080";
@@ -266,8 +351,9 @@ function initAllContractsUi() {
   $("allRefresh")?.addEventListener("click", () => loadAllContracts(true));
   $("allContractsLoadMore")?.addEventListener("click", () => loadAllContracts(false));
   $("reprocessAll")?.addEventListener("click", async () => {
-    const ok = window.confirm(
-      "Reprocess all contracts? This may take a long time on large databases."
+    const ok = await showConfirm(
+      "Reprocess all contracts? This may take a long time on large databases.",
+      { confirmText: "Reprocess all" }
     );
     if (!ok) return;
     const status = $("allContractsStatus");
@@ -495,7 +581,7 @@ function renderContractDetail(data) {
       await loadRecent();
       await loadDetail(c.id);
     } catch (e) {
-      alert(e.message);
+      await showAlert(e.message, { title: "Update failed" });
     }
   });
 
@@ -507,7 +593,7 @@ function renderContractDetail(data) {
         await apiFetch(`/api/contracts/${c.id}/tags/${btn.dataset.tag}`, { method: "DELETE" });
         await loadDetail(c.id);
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -519,14 +605,17 @@ function renderContractDetail(data) {
       await apiFetch(`/api/contracts/${c.id}/tags/${tagId}`, { method: "POST" });
       await loadDetail(c.id);
     } catch (e) {
-      alert(e.message);
+      await showAlert(e.message, { title: "Update failed" });
     }
   });
 
   $("createTag")?.addEventListener("click", async () => {
     const name = $("newTagName").value.trim();
     const color = $("newTagColor").value || "#3b82f6";
-    if (!name) return alert("Tag name required");
+    if (!name) {
+      await showAlert("Tag name required", { title: "Missing info" });
+      return;
+    }
     try {
       const res = await apiFetch(`/api/tags`, {
         method: "POST",
@@ -541,7 +630,7 @@ function renderContractDetail(data) {
       }
       await loadDetail(c.id);
     } catch (e) {
-      alert(e.message);
+      await showAlert(e.message, { title: "Update failed" });
     }
   });
 
@@ -567,7 +656,7 @@ function renderContractDetail(data) {
         });
         await loadDetail(c.id);
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -579,7 +668,7 @@ function renderContractDetail(data) {
         await apiFetch(`/api/contracts/${c.id}/terms/${termKey}`, { method: "DELETE" });
         await loadDetail(c.id);
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -623,7 +712,7 @@ function renderContractDetail(data) {
       });
       await loadDetail(c.id);
     } catch (e) {
-      alert(e.message);
+      await showAlert(e.message, { title: "Update failed" });
     }
   });
 
@@ -642,7 +731,7 @@ function renderContractDetail(data) {
         await loadEvents();
         await loadDetail(c.id);
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -655,7 +744,7 @@ function renderContractDetail(data) {
         await loadEvents();
         await loadDetail(c.id);
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -676,7 +765,9 @@ function renderContractDetail(data) {
         .map((o) => Number.parseInt(o, 10))
         .filter((n) => Number.isFinite(n) && n > 0);
       if (!offsets.length) {
-        alert("Offsets must include at least one positive integer.");
+        await showAlert("Offsets must include at least one positive integer.", {
+          title: "Invalid reminder offsets",
+        });
         return;
       }
       try {
@@ -687,7 +778,7 @@ function renderContractDetail(data) {
         });
         await loadDetail(c.id);
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -695,7 +786,10 @@ function renderContractDetail(data) {
   $("addEvent")?.addEventListener("click", async () => {
     const type = $("newEventType").value;
     const date = $("newEventDate").value;
-    if (!date) return alert("Date is required");
+    if (!date) {
+      await showAlert("Date is required", { title: "Missing info" });
+      return;
+    }
     try {
       await apiFetch(`/api/contracts/${c.id}/events`, {
         method: "POST",
@@ -705,13 +799,15 @@ function renderContractDetail(data) {
       await loadEvents();
       await loadDetail(c.id);
     } catch (e) {
-      alert(e.message);
+      await showAlert(e.message, { title: "Update failed" });
     }
   });
 }
 
 async function reprocessContract(contractId) {
-  const ok = window.confirm("Reprocess this contract? This will re-run OCR and extraction.");
+  const ok = await showConfirm("Reprocess this contract? This will re-run OCR and extraction.", {
+    confirmText: "Reprocess",
+  });
   if (!ok) return;
   try {
     await apiFetch(`/api/contracts/${contractId}/reprocess`, { method: "POST" });
@@ -721,7 +817,7 @@ async function reprocessContract(contractId) {
       await loadAllContracts(true);
     }
   } catch (e) {
-    alert(e.message);
+    await showAlert(e.message, { title: "Update failed" });
   }
 }
 
@@ -979,7 +1075,7 @@ function renderPlannerTable() {
         await loadEvents();
         await loadPlannerEvents();
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -991,7 +1087,7 @@ function renderPlannerTable() {
         await loadEvents();
         await loadPlannerEvents();
       } catch (e) {
-        alert(e.message);
+        await showAlert(e.message, { title: "Update failed" });
       }
     });
   });
@@ -1027,10 +1123,16 @@ function initPlannerUi() {
     const contractId = $("plannerContract")?.value;
     let eventType = $("plannerEventType")?.value;
     const date = $("plannerEventDate")?.value;
-    if (!contractId || !date) return alert("Contract and date are required");
+    if (!contractId || !date) {
+      await showAlert("Contract and date are required", { title: "Missing info" });
+      return;
+    }
     if (eventType === "custom") {
       eventType = $("plannerCustomType")?.value?.trim();
-      if (!eventType) return alert("Provide a custom event type");
+      if (!eventType) {
+        await showAlert("Provide a custom event type", { title: "Missing info" });
+        return;
+      }
     }
     try {
       await apiFetch(`/api/contracts/${contractId}/events`, {
@@ -1042,7 +1144,7 @@ function initPlannerUi() {
       await loadEvents();
       await loadPlannerEvents();
     } catch (e) {
-      alert(e.message);
+      await showAlert(e.message, { title: "Update failed" });
     }
   });
 
@@ -1067,6 +1169,7 @@ $("saveApi").addEventListener("click", async () => {
 $("refresh").addEventListener("click", loadRecent);
 
 setApiUi();
+initModal();
 initDropzone();
 initEventsUi();
 initPlannerUi();
