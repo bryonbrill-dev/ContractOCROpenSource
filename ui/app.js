@@ -6,6 +6,11 @@ const state = {
   tags: [],
   agreementTypes: [],
   contracts: [],
+  allContracts: [],
+  allContractsQuery: "",
+  allContractsOffset: 0,
+  allContractsLimit: 200,
+  currentPage: "contracts",
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -94,7 +99,7 @@ async function loadReferenceData() {
 }
 
 async function loadContractsList() {
-  const res = await apiFetch(`/api/contracts?limit=500`);
+  const res = await apiFetch(`/api/contracts?limit=500&include_tags=false`);
   state.contracts = await res.json();
 }
 
@@ -153,6 +158,133 @@ async function loadRecent() {
       ev.preventDefault();
       await loadDetail(a.dataset.id);
     });
+  });
+}
+
+function renderAllContractsTable(rows, append = false) {
+  const tbody = $("allContractsTable");
+  if (!tbody) return;
+  if (!rows.length && !append) {
+    tbody.innerHTML = `<tr><td colspan="5" class="muted">No contracts found.</td></tr>`;
+    return;
+  }
+
+  const html = rows
+    .map((r) => {
+      const id = r.id;
+      const title = r.title || r.original_filename || id;
+      const uploaded = r.uploaded_at || "";
+      return `
+        <tr>
+          <td>${badge(r.status)}</td>
+          <td><a href="#" data-id="${id}" class="open-contract">${title}</a></td>
+          <td class="small">${r.vendor || ""}</td>
+          <td class="small">${uploaded}</td>
+          <td class="small">
+            <a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>
+            &nbsp;|&nbsp;
+            <a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>
+            &nbsp;|&nbsp;
+            <button class="reprocess-btn" data-id="${id}">Reprocess</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  if (append) {
+    tbody.insertAdjacentHTML("beforeend", html);
+  } else {
+    tbody.innerHTML = html;
+  }
+
+  document.querySelectorAll("a.open-contract").forEach((a) => {
+    a.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      await loadDetail(a.dataset.id);
+      showPage("contracts");
+    });
+  });
+
+  document.querySelectorAll(".reprocess-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await reprocessContract(btn.dataset.id);
+    });
+  });
+}
+
+async function loadAllContracts(reset = true) {
+  const status = $("allContractsStatus");
+  const loadMoreBtn = $("allContractsLoadMore");
+  if (reset) {
+    state.allContractsOffset = 0;
+    state.allContracts = [];
+    if (status) status.textContent = "Loading contracts…";
+  }
+
+  const params = new URLSearchParams({
+    limit: String(state.allContractsLimit),
+    offset: String(state.allContractsOffset),
+    include_tags: "false",
+  });
+  if (state.allContractsQuery) {
+    params.set("q", state.allContractsQuery);
+    params.set("mode", "quick");
+  }
+
+  try {
+    const res = await apiFetch(`/api/contracts?${params.toString()}`);
+    const rows = await res.json();
+    state.allContracts = reset ? rows : state.allContracts.concat(rows);
+    renderAllContractsTable(rows, !reset);
+    state.allContractsOffset += rows.length;
+
+    if (status) {
+      status.textContent = `Showing ${state.allContracts.length} contract${state.allContracts.length === 1 ? "" : "s"}.`;
+    }
+
+    if (loadMoreBtn) {
+      loadMoreBtn.disabled = rows.length < state.allContractsLimit;
+    }
+  } catch (e) {
+    if (status) status.textContent = e.message;
+  }
+}
+
+let allContractsSearchTimer = null;
+
+function initAllContractsUi() {
+  const search = $("allContractsSearch");
+  search?.addEventListener("input", () => {
+    if (allContractsSearchTimer) window.clearTimeout(allContractsSearchTimer);
+    allContractsSearchTimer = window.setTimeout(() => {
+      state.allContractsQuery = search.value.trim();
+      loadAllContracts(true);
+    }, 300);
+  });
+
+  $("allRefresh")?.addEventListener("click", () => loadAllContracts(true));
+  $("allContractsLoadMore")?.addEventListener("click", () => loadAllContracts(false));
+  $("reprocessAll")?.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "Reprocess all contracts? This may take a long time on large databases."
+    );
+    if (!ok) return;
+    const status = $("allContractsStatus");
+    if (status) status.textContent = "Reprocessing all contracts…";
+    try {
+      const res = await apiFetch(`/api/contracts/reprocess?all=true`, { method: "POST" });
+      const data = await res.json();
+      const errorCount = data.errors?.length || 0;
+      if (status) {
+        status.textContent = `Reprocessed ${data.processed?.length || 0} contract${data.processed?.length === 1 ? "" : "s"}.` +
+          (errorCount ? ` ${errorCount} error${errorCount === 1 ? "" : "s"} reported.` : "");
+      }
+      await loadRecent();
+      await loadAllContracts(true);
+    } catch (e) {
+      if (status) status.textContent = e.message;
+    }
   });
 }
 
@@ -271,6 +403,9 @@ function renderContractDetail(data) {
     <div><b>${c.title || c.original_filename || c.id}</b></div>
     <div class="small muted">ID: ${c.id}</div>
     <div style="margin-top:8px">Status: ${badge(c.status)}</div>
+    <div class="inline" style="gap:8px; margin-top:8px;">
+      <button id="reprocessContract">Reprocess</button>
+    </div>
     <div class="small muted" style="margin-top:4px;">Agreement Type: <span class="pill">${agreementType}</span></div>
     <div class="section" style="margin-top:10px;">
       <h4>Extracted Terms</h4>
@@ -357,6 +492,8 @@ function renderContractDetail(data) {
       alert(e.message);
     }
   });
+
+  $("reprocessContract")?.addEventListener("click", () => reprocessContract(c.id));
 
   document.querySelectorAll(".remove-tag").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -560,6 +697,21 @@ function renderContractDetail(data) {
   });
 }
 
+async function reprocessContract(contractId) {
+  const ok = window.confirm("Reprocess this contract? This will re-run OCR and extraction.");
+  if (!ok) return;
+  try {
+    await apiFetch(`/api/contracts/${contractId}/reprocess`, { method: "POST" });
+    await loadRecent();
+    await loadDetail(contractId);
+    if (state.currentPage === "allContracts") {
+      await loadAllContracts(true);
+    }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
 async function loadDetail(id) {
   const detail = $("detail");
   detail.innerHTML = "Loading…";
@@ -744,12 +896,16 @@ async function loadEvents() {
 }
 
 function showPage(page) {
-  const pages = ["contracts", "events", "planner"];
+  const pages = ["contracts", "allContracts", "events", "planner"];
+  state.currentPage = page;
   pages.forEach((p) => {
     $(p + "Page")?.classList.toggle("hidden", p !== page);
     $("nav" + p.charAt(0).toUpperCase() + p.slice(1))?.classList.toggle("active", p === page);
   });
 
+  if (page === "allContracts") {
+    loadAllContracts(true);
+  }
   if (page === "events" && !state.events.length) {
     loadEvents();
   }
@@ -883,6 +1039,7 @@ function initPlannerUi() {
 }
 
 $("navContracts")?.addEventListener("click", () => showPage("contracts"));
+$("navAllContracts")?.addEventListener("click", () => showPage("allContracts"));
 $("navEvents")?.addEventListener("click", () => showPage("events"));
 $("navPlanner")?.addEventListener("click", () => showPage("planner"));
 
@@ -900,6 +1057,7 @@ setApiUi();
 initDropzone();
 initEventsUi();
 initPlannerUi();
+initAllContractsUi();
 showPage("contracts");
 
 testApi()
