@@ -25,8 +25,12 @@
     .yellow { background: #b26a00; }
     .muted { color: #666; font-size: 12px; }
     input, button, select { padding: 8px; }
-    button { cursor: pointer; }
-    a { text-decoration: none; }
+    input, select { border: 1px solid #111; border-radius: 6px; background: #fff; }
+    input:focus, select:focus { outline: 2px solid #111; outline-offset: 1px; }
+    button { cursor: pointer; background: #111827; color: #fff; border: 1px solid #111827; border-radius: 6px; font-weight: 600; }
+    button:hover { background: #000; border-color: #000; }
+    button:focus { outline: 2px solid #111; outline-offset: 1px; }
+    a { text-decoration: underline; color: #1d4ed8; font-weight: 600; }
     .small { font-size: 12px; }
     pre { white-space: pre-wrap; word-break: break-word; }
     .hidden { display: none; }
