@@ -793,16 +793,13 @@ function renderContractDetail(data) {
         .filter(Boolean)
         .map((o) => Number.parseInt(o, 10))
         .filter((n) => Number.isFinite(n) && n >= 0);
-      let enabled = true;
       if (!recipients.length) {
-        const ok = await showConfirm(
-          "No recipients provided. Save reminders in a disabled state?",
-          { confirmText: "Save disabled", cancelText: "Keep editing" }
-        );
-        if (!ok) return;
-        enabled = false;
+        await showAlert("Recipients must include at least one email address.", {
+          title: "Invalid reminder recipients",
+        });
+        return;
       }
-      if (enabled && !offsets.length) {
+      if (!offsets.length) {
         await showAlert("Offsets must include at least one non-negative integer.", {
           title: "Invalid reminder offsets",
         });
