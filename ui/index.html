@@ -152,8 +152,11 @@
               <h3 style="margin:0">Expiring Events</h3>
               <div class="muted small">Search and review renewal/termination timelines like nested folders.</div>
             </div>
-        <button id="eventsRefresh">Refresh</button>
-      </div>
+            <div class="inline">
+              <button id="eventsRefresh">Refresh</button>
+              <button id="eventsExport">Export CSV</button>
+            </div>
+          </div>
 
           <div class="row wrap filters" style="margin-top:12px; gap:12px;">
             <label style="min-width:140px;">
@@ -207,6 +210,7 @@
         </div>
         <div class="inline">
           <button id="allRefresh">Refresh</button>
+          <button id="allContractsExport">Export CSV</button>
           <button id="reprocessAll">Reprocess all</button>
         </div>
       </div>
@@ -246,7 +250,10 @@
           <h3 style="margin:0">Event Planner</h3>
           <div class="muted small">Add or edit renewal timelines and events for any contract.</div>
         </div>
-        <button id="plannerRefresh">Refresh</button>
+        <div class="inline">
+          <button id="plannerRefresh">Refresh</button>
+          <button id="plannerExport">Export CSV</button>
+        </div>
       </div>
 
       <div class="row wrap filters" style="margin-top:12px; gap:12px;">
