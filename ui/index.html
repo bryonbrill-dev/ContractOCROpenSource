@@ -69,6 +69,7 @@
 
   <div class="nav">
     <button id="navContracts" class="active">Contracts</button>
+    <button id="navAllContracts">All Contracts</button>
     <button id="navEvents">Events</button>
     <button id="navPlanner">Planner</button>
   </div>
@@ -178,6 +179,47 @@
 
       <div class="muted small" id="eventsStatus" style="margin-top:4px"></div>
       <div id="eventsList" class="folder-list"></div>
+    </div>
+  </div>
+
+  <div id="allContractsPage" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">All Contracts</h3>
+          <div class="muted small">Search across titles, vendors, and filenames.</div>
+        </div>
+        <div class="inline">
+          <button id="allRefresh">Refresh</button>
+          <button id="reprocessAll">Reprocess all</button>
+        </div>
+      </div>
+
+      <div class="row wrap filters" style="margin-top:12px; gap:12px;">
+        <label style="flex:1; min-width:240px;">
+          Search
+          <input id="allContractsSearch" type="text" placeholder="Search contracts..." />
+        </label>
+      </div>
+      <div class="muted small" style="margin-top:6px;">
+        Reprocess all runs OCR again for every contract and is not recommended for large databases.
+      </div>
+      <div class="muted small" id="allContractsStatus" style="margin-top:4px"></div>
+      <table style="margin-top:10px">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Title</th>
+            <th>Vendor</th>
+            <th>Uploaded</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="allContractsTable"></tbody>
+      </table>
+      <div style="margin-top:10px;">
+        <button id="allContractsLoadMore">Load more</button>
+      </div>
     </div>
   </div>
 

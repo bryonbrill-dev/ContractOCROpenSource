@@ -198,6 +198,11 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_contracts_agreement_type ON contracts(agreement_type)"
         )
 
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_contracts_title ON contracts(title)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_contracts_original_filename ON contracts(original_filename)"
+    )
+
 # ----------------------------
 # Models
 # ----------------------------
@@ -285,6 +290,11 @@ class EventUpdate(BaseModel):
     event_date: Optional[str] = None
     derived_from_term_key: Optional[str] = None
 
+
+class BulkReprocessResponse(BaseModel):
+    processed: List[str]
+    errors: List[Dict[str, str]]
+
 # ----------------------------
 # Schema + seed (inline)
 # ----------------------------
@@ -306,6 +316,8 @@ CREATE TABLE IF NOT EXISTS contracts (
 );
 CREATE INDEX IF NOT EXISTS idx_contracts_uploaded_at ON contracts(uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_contracts_vendor ON contracts(vendor);
+CREATE INDEX IF NOT EXISTS idx_contracts_title ON contracts(title);
+CREATE INDEX IF NOT EXISTS idx_contracts_original_filename ON contracts(original_filename);
 CREATE INDEX IF NOT EXISTS idx_contracts_agreement_type ON contracts(agreement_type);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_contracts_sha256 ON contracts(sha256);
 
@@ -688,6 +700,69 @@ def remove_tag_from_contract(contract_id: str, tag_id: int):
         )
         return {"contract_id": contract_id, "tag_id": tag_id}
 
+
+def _reprocess_contract(contract_id: str) -> Dict[str, Any]:
+    with db() as conn:
+        existing = conn.execute(
+            """
+            SELECT id, stored_path, original_filename, agreement_type
+            FROM contracts
+            WHERE id = ?
+            """,
+            (contract_id,),
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        conn.execute(
+            "DELETE FROM contract_tags WHERE contract_id = ? AND auto_generated = 1",
+            (contract_id,),
+        )
+
+    logger.info(f"REPROCESS START contract_id={contract_id}")
+
+    try:
+        result = process_contract(
+            db_path=DB_PATH,
+            contract_id=contract_id,
+            stored_path=existing["stored_path"],
+            tesseract_cmd=TESSERACT_CMD,
+            max_pages=8,
+            poppler_path=POPPLER_PATH,
+        )
+
+        ocr_text = result.get("ocr_text", "")
+        agreement_type = existing["agreement_type"]
+        if not agreement_type or agreement_type == "Uncategorized":
+            agreement_type = detect_agreement_type(ocr_text, existing["original_filename"])
+
+        with db() as conn:
+            conn.execute(
+                "UPDATE contracts SET status='processed', agreement_type=? WHERE id=?",
+                (agreement_type, contract_id),
+            )
+
+        auto_tag_contract(contract_id, ocr_text)
+        logger.info(f"REPROCESS SUCCESS contract_id={contract_id}")
+
+        return {
+            "contract_id": contract_id,
+            "status": "processed",
+            "agreement_type": agreement_type,
+            "pages": result.get("pages_ocrd"),
+        }
+
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        with db() as conn:
+            conn.execute("UPDATE contracts SET status='error' WHERE id=?", (contract_id,))
+        logger.error(
+            f"REPROCESS FAILED contract_id={contract_id} | {error_msg}\n{traceback.format_exc()}"
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Reprocessing failed: {error_msg}"
+        )
+
 # ----------------------------
 # Upload
 # ----------------------------
@@ -805,6 +880,74 @@ async def upload_contract(
         )
 
 # ----------------------------
+# Reprocess
+# ----------------------------
+@app.post("/api/contracts/{contract_id}/reprocess")
+def reprocess_single_contract(contract_id: str):
+    return _reprocess_contract(contract_id)
+
+
+@app.post("/api/contracts/reprocess", response_model=BulkReprocessResponse)
+def reprocess_contracts(
+    limit: int = 50,
+    status: Optional[str] = None,
+    agreement_type: Optional[str] = None,
+    all: bool = False,
+):
+    limit = max(1, min(limit, 500))
+
+    with db() as conn:
+        where_clauses = []
+        params: List[Any] = []
+
+        if status:
+            where_clauses.append("status = ?")
+            params.append(status)
+        if agreement_type:
+            where_clauses.append("agreement_type = ?")
+            params.append(agreement_type)
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        if all:
+            rows = conn.execute(
+                f"""
+                SELECT id
+                FROM contracts
+                WHERE {where_sql}
+                ORDER BY uploaded_at DESC
+                """,
+                tuple(params),
+            ).fetchall()
+        else:
+            params.append(limit)
+            rows = conn.execute(
+                f"""
+                SELECT id
+                FROM contracts
+                WHERE {where_sql}
+                ORDER BY uploaded_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+
+    processed: List[str] = []
+    errors: List[Dict[str, str]] = []
+
+    for row in rows:
+        contract_id = row["id"]
+        try:
+            _reprocess_contract(contract_id)
+            processed.append(contract_id)
+        except HTTPException as exc:
+            errors.append({"contract_id": contract_id, "error": str(exc.detail)})
+        except Exception as exc:
+            errors.append({"contract_id": contract_id, "error": str(exc)})
+
+    return {"processed": processed, "errors": errors}
+
+# ----------------------------
 # Calendar events endpoint
 # ----------------------------
 @app.get("/api/calendar/events")
@@ -849,9 +992,17 @@ def get_calendar_events(start: str, end: str):
 @app.get("/api/contracts")
 def list_contracts(
     limit: int = 50,
+    offset: int = 0,
     status: Optional[str] = None,
     agreement_type: Optional[str] = None,
+    q: Optional[str] = None,
+    mode: Optional[Literal["quick", "fulltext"]] = "quick",
+    include_tags: bool = True,
 ):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    q = (q or "").strip()
+
     with db() as conn:
         where_clauses = []
         params: List[Any] = []
@@ -864,22 +1015,58 @@ def list_contracts(
             params.append(agreement_type)
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-        params.append(limit)
 
-        rows = conn.execute(
-            f"""
-            SELECT id, title, vendor, agreement_type,
-                   original_filename, status, pages, uploaded_at, sha256
-            FROM contracts
-            WHERE {where_sql}
-            ORDER BY uploaded_at DESC
-            LIMIT ?
-            """,
-            tuple(params),
-        ).fetchall()
+        if q:
+            if mode == "fulltext":
+                params = [q] + params + [limit, offset]
+                rows = conn.execute(
+                    f"""
+                    SELECT c.id, c.title, c.vendor, c.agreement_type,
+                           c.original_filename, c.status, c.pages, c.uploaded_at, c.sha256
+                    FROM contracts_fts f
+                    JOIN contracts c ON c.id = f.contract_id
+                    WHERE contracts_fts MATCH ?
+                      AND {where_sql}
+                    ORDER BY c.uploaded_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params),
+                ).fetchall()
+            else:
+                like = f"%{q}%"
+                params = [like, like, like] + params + [limit, offset]
+                rows = conn.execute(
+                    f"""
+                    SELECT id, title, vendor, agreement_type,
+                           original_filename, status, pages, uploaded_at, sha256
+                    FROM contracts
+                    WHERE (title LIKE ? OR vendor LIKE ? OR original_filename LIKE ?)
+                      AND {where_sql}
+                    ORDER BY uploaded_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params),
+                ).fetchall()
+        else:
+            params.append(limit)
+            params.append(offset)
+            rows = conn.execute(
+                f"""
+                SELECT id, title, vendor, agreement_type,
+                       original_filename, status, pages, uploaded_at, sha256
+                FROM contracts
+                WHERE {where_sql}
+                ORDER BY uploaded_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params),
+            ).fetchall()
 
-        result = []
-        for r in rows:
+        result = [dict(r) for r in rows]
+        if not include_tags:
+            return result
+
+        for item in result:
             tags = conn.execute(
                 """
                 SELECT t.id, t.name, t.color, ct.auto_generated
@@ -887,10 +1074,9 @@ def list_contracts(
                 JOIN tags t ON t.id = ct.tag_id
                 WHERE ct.contract_id = ?
                 """,
-                (r["id"],),
+                (item["id"],),
             ).fetchall()
-
-            result.append({**dict(r), "tags": [dict(t) for t in tags]})
+            item["tags"] = [dict(t) for t in tags]
 
         return result
 
