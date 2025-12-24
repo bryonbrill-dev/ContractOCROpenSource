@@ -6,10 +6,12 @@ import os
 import json
 import uuid
 import hashlib
+import smtplib
 import sqlite3
 import logging
 import traceback
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from email.message import EmailMessage
 from typing import Optional, List, Literal, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
@@ -211,7 +213,7 @@ SearchMode = Literal["quick", "terms", "fulltext"]
 
 class ReminderUpdate(BaseModel):
     recipients: List[str] = Field(default_factory=list)
-    offsets: List[int] = Field(default_factory=lambda: [90, 60, 30, 7])
+    offsets: List[int] = Field(default_factory=lambda: [90, 60, 30, 7, 0])
     enabled: bool = True
 
     @validator("recipients", pre=True)
@@ -1450,10 +1452,10 @@ def search(
 # ----------------------------
 @app.put("/api/events/{event_id}/reminders")
 def update_reminders(event_id: str, payload: ReminderUpdate):
-    offsets = sorted(set(int(x) for x in payload.offsets if int(x) > 0))
+    offsets = sorted(set(int(x) for x in payload.offsets if int(x) >= 0))
     if not offsets:
         raise HTTPException(
-            status_code=400, detail="offsets must contain positive integers"
+            status_code=400, detail="offsets must contain non-negative integers"
         )
 
     recipients = [r.strip() for r in payload.recipients if r.strip()]
@@ -1494,6 +1496,175 @@ def update_reminders(event_id: str, payload: ReminderUpdate):
         "offsets": offsets,
         "enabled": payload.enabled,
     }
+
+# ----------------------------
+# Reminder email delivery
+# ----------------------------
+def _smtp_from_address() -> str:
+    from_addr = os.getenv("SMTP_FROM", "").strip()
+    if from_addr:
+        return from_addr
+    username = os.getenv("SMTP_USERNAME", "").strip()
+    if username:
+        return username
+    raise RuntimeError("SMTP_FROM or SMTP_USERNAME must be set for email delivery")
+
+
+def _send_email(recipients: List[str], subject: str, body: str) -> None:
+    host = os.getenv("SMTP_HOST", "").strip()
+    if not host:
+        raise RuntimeError("SMTP_HOST is not configured")
+
+    port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("SMTP_USERNAME", "").strip()
+    password = os.getenv("SMTP_PASSWORD", "").strip()
+    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+    use_ssl = os.getenv("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
+    from_name = os.getenv("SMTP_FROM_NAME", "").strip()
+    from_addr = _smtp_from_address()
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{from_name} <{from_addr}>" if from_name else from_addr
+    msg["To"] = ", ".join(recipients)
+    msg.set_content(body)
+
+    if use_ssl:
+        with smtplib.SMTP_SSL(host, port) as smtp:
+            if username and password:
+                smtp.login(username, password)
+            smtp.send_message(msg)
+        return
+
+    with smtplib.SMTP(host, port) as smtp:
+        if use_tls:
+            smtp.starttls()
+        if username and password:
+            smtp.login(username, password)
+        smtp.send_message(msg)
+
+
+def _format_event_subject(event_type: str, title: str, event_date: str, offset_days: int) -> str:
+    kind = event_type.replace("_", " ").title()
+    if offset_days == 0:
+        return f"{kind} today: {title} ({event_date})"
+    return f"{kind} in {offset_days} days: {title} ({event_date})"
+
+
+def _format_event_body(event: sqlite3.Row, offset_days: int) -> str:
+    lines = [
+        f"Contract: {event['title']}",
+        f"Vendor: {event['vendor'] or 'N/A'}",
+        f"Agreement Type: {event['agreement_type'] or 'Uncategorized'}",
+        f"Event Type: {event['event_type']}",
+        f"Event Date: {event['event_date']}",
+        f"Reminder Offset: {offset_days} day(s)",
+    ]
+    return "\n".join(lines)
+
+
+def _send_due_reminders(reference_date: date) -> Dict[str, Any]:
+    sent = 0
+    skipped = 0
+    errors: List[Dict[str, str]] = []
+
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT rs.event_id, rs.recipients, rs.offsets_json, rs.enabled,
+                   e.event_date, e.event_type, c.title, c.vendor, c.agreement_type
+            FROM reminder_settings rs
+            JOIN events e ON e.id = rs.event_id
+            JOIN contracts c ON c.id = e.contract_id
+            WHERE rs.enabled = 1
+            """
+        ).fetchall()
+
+        for row in rows:
+            offsets = json.loads(row["offsets_json"])
+            event_date = date.fromisoformat(row["event_date"])
+            recipients = [r.strip() for r in row["recipients"].split(",") if r.strip()]
+            if not recipients:
+                skipped += 1
+                continue
+
+            for offset in offsets:
+                try:
+                    offset_days = int(offset)
+                except (TypeError, ValueError):
+                    continue
+
+                scheduled_for = (event_date - timedelta(days=offset_days)).isoformat()
+                if scheduled_for != reference_date.isoformat():
+                    continue
+
+                existing = conn.execute(
+                    """
+                    SELECT status FROM reminder_sends
+                    WHERE event_id = ? AND offset_days = ? AND scheduled_for = ?
+                    """,
+                    (row["event_id"], offset_days, scheduled_for),
+                ).fetchone()
+                if existing and existing["status"] == "sent":
+                    skipped += 1
+                    continue
+
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO reminder_sends (event_id, offset_days, scheduled_for, status)
+                    VALUES (?, ?, ?, 'pending')
+                    """,
+                    (row["event_id"], offset_days, scheduled_for),
+                )
+
+                try:
+                    subject = _format_event_subject(
+                        row["event_type"],
+                        row["title"],
+                        row["event_date"],
+                        offset_days,
+                    )
+                    body = _format_event_body(row, offset_days)
+                    _send_email(recipients, subject, body)
+                    conn.execute(
+                        """
+                        UPDATE reminder_sends
+                        SET sent_at = ?, status = 'sent', error = NULL
+                        WHERE event_id = ? AND offset_days = ? AND scheduled_for = ?
+                        """,
+                        (now_iso(), row["event_id"], offset_days, scheduled_for),
+                    )
+                    sent += 1
+                except Exception as exc:
+                    error_msg = f"{type(exc).__name__}: {exc}"
+                    conn.execute(
+                        """
+                        UPDATE reminder_sends
+                        SET status = 'error', error = ?
+                        WHERE event_id = ? AND offset_days = ? AND scheduled_for = ?
+                        """,
+                        (error_msg, row["event_id"], offset_days, scheduled_for),
+                    )
+                    errors.append(
+                        {
+                            "event_id": row["event_id"],
+                            "offset_days": offset_days,
+                            "scheduled_for": scheduled_for,
+                            "error": error_msg,
+                        }
+                    )
+
+    return {"sent": sent, "skipped": skipped, "errors": errors}
+
+
+@app.post("/api/reminders/send")
+def send_reminders(date_str: Optional[str] = None):
+    if date_str:
+        target_date = _normalize_date_string(date_str)
+        reference_date = date.fromisoformat(target_date)
+    else:
+        reference_date = date.today()
+    return _send_due_reminders(reference_date)
 
 # ----------------------------
 # In-app bell notifications
