@@ -340,18 +340,18 @@ function renderContractDetail(data) {
     ? terms
         .map(
           (t) => `
-        <div class="section term-row" data-term="${t.term_key}">
-          <div class="inline" style="justify-content:space-between; width:100%;">
-            <div>
-              <b>${t.name || t.term_key}</b>
+        <details class="section term-row" data-term="${t.term_key}">
+          <summary>
+            <span class="summary-title">
+              ${t.name || t.term_key}
               <span class="muted small">${t.term_key}</span>
               ${termEventLabel(t.term_key) ? `<span class="pill">${termEventLabel(t.term_key)} event</span>` : ""}
-            </div>
-            <div class="inline">
+            </span>
+            <span class="summary-meta">
               ${statusPill(t.status)}
-              <span class="muted small">${(t.confidence ?? 0).toFixed(2)}</span>
-            </div>
-          </div>
+              <span>${(t.confidence ?? 0).toFixed(2)}</span>
+            </span>
+          </summary>
           <div class="row wrap" style="gap:8px; margin-top:6px;">
             <input class="muted-input term-value" type="text" value="${t.value_normalized || t.value_raw || ""}" />
             <select class="term-status">
@@ -360,7 +360,7 @@ function renderContractDetail(data) {
             <button class="save-term" data-term="${t.term_key}">Save</button>
             <button class="delete-term" data-term="${t.term_key}">Delete</button>
           </div>
-        </div>`
+        </details>`
         )
         .join("")
     : `<div class="muted small">No extracted terms. Use the form below to add one manually.</div>`;
@@ -372,14 +372,14 @@ function renderContractDetail(data) {
           const offsets = reminder?.offsets?.join(", ") || "";
           const recipients = reminder?.recipients?.join(", ") || "";
           return `
-          <div class="section" data-event="${e.id}">
-            <div class="inline" style="justify-content:space-between; width:100%;">
-              <div>
+          <details class="section" data-event="${e.id}">
+            <summary>
+              <span class="summary-title">
                 ${eventTypePill(e.event_type)}
                 ${e.derived_from_term_key ? `<span class="pill">From ${e.derived_from_term_key}</span>` : ""}
-              </div>
-              <div class="muted small">${formatDate(e.event_date)}</div>
-            </div>
+              </span>
+              <span class="summary-meta">${formatDate(e.event_date)}</span>
+            </summary>
             <div class="row wrap" style="gap:8px; margin-top:6px;">
               <input type="date" class="event-date" value="${(e.event_date || "").slice(0, 10)}" />
               <select class="event-type">
@@ -394,7 +394,7 @@ function renderContractDetail(data) {
               <button class="save-reminder" data-event="${e.id}">Save reminders</button>
               <span class="muted small">${reminder ? "Configured" : "Not configured"}</span>
             </div>
-          </div>`;
+          </details>`;
         })
         .join("")
     : `<div class="muted small">No events. Add one manually below.</div>`;
@@ -424,8 +424,8 @@ function renderContractDetail(data) {
       </div>
     </div>
 
-    <div class="section">
-      <h4>Tags</h4>
+    <details class="section">
+      <summary class="summary-title">Tags</summary>
       <div id="contractTags">${tagHtml}</div>
       <div class="row wrap" style="gap:8px; margin-top:6px;">
         <select id="tagPicker">${tagOptions}</select>
@@ -436,10 +436,10 @@ function renderContractDetail(data) {
         <input type="color" id="newTagColor" value="#3b82f6" />
         <button id="createTag">Create & attach</button>
       </div>
-    </div>
+    </details>
 
-    <div class="section">
-      <h4>Terms</h4>
+    <details class="section">
+      <summary class="summary-title">Terms</summary>
       ${termsHtml}
       <div class="section" style="margin-top:8px;">
         <div class="muted small">Add or override a term</div>
@@ -457,10 +457,10 @@ function renderContractDetail(data) {
           <button id="addTerm">Add/Update Term</button>
         </div>
       </div>
-    </div>
+    </details>
 
-    <div class="section">
-      <h4>Events</h4>
+    <details class="section">
+      <summary class="summary-title">Events</summary>
       ${eventsHtml}
       <div class="section" style="margin-top:8px;">
         <div class="muted small">Add an event manually</div>
@@ -472,7 +472,7 @@ function renderContractDetail(data) {
           <button id="addEvent">Add Event</button>
         </div>
       </div>
-    </div>
+    </details>
   `;
 
   $("saveContractMeta")?.addEventListener("click", async () => {
