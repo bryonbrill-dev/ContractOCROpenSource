@@ -50,6 +50,12 @@
     .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #374151; }
     .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #444; }
     .section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; background: #f8fafc; }
+    details.section { padding: 8px 10px; }
+    details.section > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    details.section > summary::-webkit-details-marker { display: none; }
+    details.section > summary::marker { content: ""; }
+    .summary-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: bold; }
+    .summary-meta { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #6b7280; font-weight: normal; }
     .pill.tag { border-color: transparent; }
     .section h4 { margin: 0 0 6px 0; }
     .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
