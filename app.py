@@ -1453,16 +1453,18 @@ def search(
 @app.put("/api/events/{event_id}/reminders")
 def update_reminders(event_id: str, payload: ReminderUpdate):
     offsets = sorted(set(int(x) for x in payload.offsets if int(x) >= 0))
-    if not offsets:
-        raise HTTPException(
-            status_code=400, detail="offsets must contain non-negative integers"
-        )
-
     recipients = [r.strip() for r in payload.recipients if r.strip()]
-    if not recipients:
-        raise HTTPException(
-            status_code=400, detail="recipients cannot be empty"
-        )
+    if payload.enabled:
+        if not offsets:
+            raise HTTPException(
+                status_code=400, detail="offsets must contain non-negative integers"
+            )
+        if not recipients:
+            raise HTTPException(status_code=400, detail="recipients cannot be empty")
+    else:
+        if not offsets:
+            offsets = []
+        recipients = []
 
     with db() as conn:
         ev = conn.execute(

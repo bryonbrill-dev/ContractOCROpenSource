@@ -809,7 +809,7 @@ function renderContractDetail(data) {
         await apiFetch(`/api/events/${eventId}/reminders`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recipients, offsets, enabled: true }),
+          body: JSON.stringify({ recipients, offsets, enabled }),
         });
         await loadDetail(c.id);
       } catch (e) {
