@@ -306,6 +306,9 @@ function renderContractDetail(data) {
   const agreementType = c.agreement_type || "Uncategorized";
   const termLookup = new Map(terms.map((t) => [t.term_key, t]));
   const eventLookup = new Map(events.filter((e) => e.derived_from_term_key).map((e) => [e.derived_from_term_key, e]));
+  const vendorTerm = termLookup.get("vendor");
+  const vendorFromTerms = vendorTerm ? vendorTerm.value_normalized || vendorTerm.value_raw || "" : "";
+  const vendorAutoValue = c.vendor || vendorFromTerms;
 
   const termOptions = state.definitions
     .map((d) => `<option value="${d.key}" data-type="${d.value_type}">${d.name}</option>`)
@@ -327,13 +330,16 @@ function renderContractDetail(data) {
         .join("")
     : `<div class="muted small">No tags yet.</div>`;
 
-  const termSummaryHtml = terms.length
-    ? terms
-        .map((t) => {
-          const value = t.value_normalized || t.value_raw || "";
-          return `<span class="pill ${`status-${(t.status || "manual").toLowerCase()}`}" title="${t.term_key}">${t.name || t.term_key}: ${value}</span>`;
-        })
-        .join(" ")
+  const termSummaryItems = terms.map((t) => {
+    const value = t.value_normalized || t.value_raw || "";
+    return `<span class="pill ${`status-${(t.status || "manual").toLowerCase()}`}" title="${t.term_key}">${t.name || t.term_key}: ${value}</span>`;
+  });
+  const hasVendorTerm = terms.some((t) => t.term_key === "vendor");
+  if (!hasVendorTerm && vendorAutoValue) {
+    termSummaryItems.push(`<span class="pill status-smart" title="vendor">Vendor: ${vendorAutoValue}</span>`);
+  }
+  const termSummaryHtml = termSummaryItems.length
+    ? termSummaryItems.join(" ")
     : `<div class="muted small">No extracted terms yet.</div>`;
 
   const termsHtml = terms.length
@@ -416,7 +422,7 @@ function renderContractDetail(data) {
       <h4>Contract Info</h4>
       <div class="row wrap" style="gap:8px;">
         <input id="contractTitle" class="muted-input" type="text" placeholder="Title" value="${c.title || ""}" />
-        <input id="contractVendor" class="muted-input" type="text" placeholder="Vendor" value="${c.vendor || ""}" />
+        <input id="contractVendor" class="muted-input" type="text" placeholder="Vendor" value="${vendorAutoValue || ""}" />
         <select id="contractAgreement">
           ${optionList(state.agreementTypes.length ? state.agreementTypes : [agreementType], agreementType)}
         </select>
