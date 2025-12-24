@@ -61,6 +61,18 @@
     .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .muted-input { width: 100%; box-sizing: border-box; }
     .chip-btn { background: none; border: none; cursor: pointer; color: #b91c1c; margin-left: 6px; }
+    .modal-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15, 23, 42, 0.5); }
+    .modal-card { width: 100%; max-width: 520px; border-radius: 16px; border: 1px solid #e2e8f0; background: #fff; padding: 24px; box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18); }
+    .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .modal-title { font-size: 18px; font-weight: 600; color: #0f172a; }
+    .modal-message { margin-top: 8px; font-size: 14px; color: #475569; }
+    .modal-close { background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer; }
+    .modal-close:hover { color: #475569; }
+    .modal-actions { margin-top: 24px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+    .btn-secondary { border: 1px solid #e2e8f0; background: #fff; color: #475569; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-secondary:hover { background: #f8fafc; }
+    .btn-primary { border: none; background: #4f46e5; color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-primary:hover { background: #4338ca; }
   </style>
 </head>
 <body>
@@ -288,6 +300,22 @@
         </thead>
         <tbody id="plannerTable"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div id="modalOverlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3 id="modalTitle" class="modal-title">Confirm action</h3>
+          <p id="modalMessage" class="modal-message"></p>
+        </div>
+        <button id="modalClose" class="modal-close" aria-label="Close dialog">×</button>
+      </div>
+      <div class="modal-actions">
+        <button id="modalCancel" class="btn-secondary">Cancel</button>
+        <button id="modalConfirm" class="btn-primary">Confirm</button>
+      </div>
     </div>
   </div>
 
