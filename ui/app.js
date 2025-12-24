@@ -662,10 +662,17 @@ function renderContractDetail(data) {
         .split(",")
         .map((r) => r.trim())
         .filter(Boolean);
-      const offsets = (row.querySelector(".reminder-offsets")?.value || "")
-        .split(",")
-        .map((o) => parseInt(o.trim(), 10))
-        .filter((n) => !Number.isNaN(n));
+      const offsetsInput = row.querySelector(".reminder-offsets")?.value || "";
+      const offsets = offsetsInput
+        .split(/[\s,]+/)
+        .map((o) => o.trim())
+        .filter(Boolean)
+        .map((o) => Number.parseInt(o, 10))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (!offsets.length) {
+        alert("Offsets must include at least one positive integer.");
+        return;
+      }
       try {
         await apiFetch(`/api/events/${eventId}/reminders`, {
           method: "PUT",
