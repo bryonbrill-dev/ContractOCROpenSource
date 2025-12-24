@@ -1314,6 +1314,33 @@ def download_contract(contract_id: str):
         },
     )
 
+
+@app.get("/api/contracts/{contract_id}/ocr-text")
+def get_contract_ocr_text(contract_id: str):
+    with db() as conn:
+        c = conn.execute(
+            "SELECT id FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
+        if not c:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        rows = conn.execute(
+            """
+            SELECT page_number, text
+            FROM ocr_pages
+            WHERE contract_id = ?
+            ORDER BY page_number ASC
+            """,
+            (contract_id,),
+        ).fetchall()
+
+    pages = [dict(r) for r in rows]
+    combined = "\n\n".join(
+        [f"--- Page {p['page_number']} ---\n{p['text']}" for p in pages]
+    )
+    return {"pages": pages, "text": combined}
+
 # ----------------------------
 # Month Events API (month grid)
 # ----------------------------

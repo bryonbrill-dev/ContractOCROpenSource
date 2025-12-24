@@ -424,6 +424,12 @@ function renderContractDetail(data) {
   const vendorTerm = termLookup.get("vendor");
   const vendorFromTerms = vendorTerm ? vendorTerm.value_normalized || vendorTerm.value_raw || "" : "";
   const vendorAutoValue = c.vendor || vendorFromTerms;
+  const mimeType = (c.mime_type || "").toLowerCase();
+  const hasPreview = mimeType === "application/pdf" || mimeType.startsWith("image/");
+  const previewSrc = `${getApiBase()}/api/contracts/${c.id}/original`;
+  const previewHtml = hasPreview
+    ? `<iframe class="preview-frame" src="${previewSrc}" title="Contract file preview"></iframe>`
+    : `<div class="muted small">Preview unavailable for ${mimeType || "unknown"} files. Use download to view.</div>`;
 
   const termOptions = state.definitions
     .map((d) => `<option value="${d.key}" data-type="${d.value_type}">${d.name}</option>`)
@@ -545,6 +551,20 @@ function renderContractDetail(data) {
       </div>
     </div>
 
+    <details class="section" id="contractContent">
+      <summary class="summary-title">Content Preview <span class="summary-meta">PDF or OCR text</span></summary>
+      <div class="preview-grid">
+        <div>
+          <div class="small muted" style="margin-bottom:6px;">Document preview</div>
+          ${previewHtml}
+        </div>
+        <div>
+          <div class="small muted" style="margin-bottom:6px;">OCR text</div>
+          <pre id="contractText" class="contract-text">Open to load text…</pre>
+        </div>
+      </div>
+    </details>
+
     <details class="section">
       <summary class="summary-title">Tags</summary>
       <div id="contractTags">${tagHtml}</div>
@@ -615,6 +635,15 @@ function renderContractDetail(data) {
   });
 
   $("reprocessContract")?.addEventListener("click", () => reprocessContract(c.id));
+
+  const contentDetails = $("contractContent");
+  if (contentDetails) {
+    contentDetails.addEventListener("toggle", () => {
+      if (!contentDetails.open || contentDetails.dataset.loaded) return;
+      contentDetails.dataset.loaded = "true";
+      loadContractText(c.id);
+    });
+  }
 
   document.querySelectorAll(".remove-tag").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -837,6 +866,23 @@ function renderContractDetail(data) {
       await showAlert(e.message, { title: "Update failed" });
     }
   });
+}
+
+async function loadContractText(contractId) {
+  const textEl = $("contractText");
+  if (!textEl) return;
+  textEl.textContent = "Loading OCR text…";
+  try {
+    const res = await apiFetch(`/api/contracts/${contractId}/ocr-text`);
+    const data = await res.json();
+    if (data.text) {
+      textEl.textContent = data.text;
+      return;
+    }
+    textEl.textContent = "OCR text not available yet. Reprocess the contract to generate text.";
+  } catch (e) {
+    textEl.textContent = `Unable to load OCR text: ${e.message}`;
+  }
 }
 
 async function reprocessContract(contractId) {

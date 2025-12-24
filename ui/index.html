@@ -71,6 +71,10 @@
     .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .muted-input { width: 100%; box-sizing: border-box; }
     .chip-btn { background: none; border: none; cursor: pointer; color: #b91c1c; margin-left: 6px; }
+    .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 999px; border: 1px solid #94a3b8; color: #475569; font-size: 11px; line-height: 1; cursor: help; }
+    .preview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .preview-frame { width: 100%; height: 360px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+    .contract-text { max-height: 360px; overflow: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -169,6 +173,7 @@
             </label>
             <label style="min-width:160px;">
               Event Type
+              <span class="info-icon" title="Event types come from extracted terms and manual entries. Renewal/termination dates appear when the contract has a term length or specific date captured. Auto-renewing contracts without a term length may not show future renewals.">i</span>
               <select id="eventTypeFilter">
                 <option value="all">All types</option>
                 <option value="renewal">Renewal</option>
@@ -193,6 +198,7 @@
         <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
           <input type="checkbox" id="expiringOnly" />
           Expiring-focused only
+          <span class="info-icon" title="Filters to renewal, termination, and auto opt-out deadlines so evergreen contracts stay out of the list unless they have a defined notice or end date.">i</span>
         </label>
       </div>
 
