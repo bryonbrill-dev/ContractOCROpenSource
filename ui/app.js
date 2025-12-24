@@ -793,6 +793,7 @@ function renderContractDetail(data) {
         .filter(Boolean)
         .map((o) => Number.parseInt(o, 10))
         .filter((n) => Number.isFinite(n) && n >= 0);
+      const enabled = true;
       if (!recipients.length) {
         await showAlert("Recipients must include at least one email address.", {
           title: "Invalid reminder recipients",
