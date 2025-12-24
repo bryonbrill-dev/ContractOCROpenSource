@@ -120,6 +120,34 @@ function badge(status) {
   return `<span class="badge yellow">${status || "unknown"}</span>`;
 }
 
+function csvValue(value) {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function downloadCsv(filename, headers, rows) {
+  const headerRow = headers.map((h) => csvValue(h.label)).join(",");
+  const lines = rows.map((row) => headers.map((h) => csvValue(row[h.key])).join(","));
+  const csv = [headerRow, ...lines].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function timestampForFilename() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 async function apiFetch(path, opts = {}) {
   const base = getApiBase();
   const url = `${base}${path}`;
@@ -349,6 +377,7 @@ function initAllContractsUi() {
   });
 
   $("allRefresh")?.addEventListener("click", () => loadAllContracts(true));
+  $("allContractsExport")?.addEventListener("click", exportAllContractsCsv);
   $("allContractsLoadMore")?.addEventListener("click", () => loadAllContracts(false));
   $("reprocessAll")?.addEventListener("click", async () => {
     const ok = await showConfirm(
@@ -764,6 +793,12 @@ function renderContractDetail(data) {
         .filter(Boolean)
         .map((o) => Number.parseInt(o, 10))
         .filter((n) => Number.isFinite(n) && n >= 0);
+      if (!recipients.length) {
+        await showAlert("Recipients must include at least one email address.", {
+          title: "Invalid reminder recipients",
+        });
+        return;
+      }
       if (!offsets.length) {
         await showAlert("Offsets must include at least one non-negative integer.", {
           title: "Invalid reminder offsets",
@@ -895,15 +930,7 @@ function renderEvents() {
   const list = $("eventsList");
   if (!list) return;
 
-  const search = ($("eventSearch")?.value || "").toLowerCase();
-  const expiringOnly = $("expiringOnly")?.checked;
-
-  const filtered = state.events.filter((ev) => {
-    const term = `${ev.title || ""} ${ev.vendor || ""} ${ev.event_type || ""} ${ev.derived_from_term_key || ""}`.toLowerCase();
-    const matchesSearch = !search || term.includes(search);
-    const matchesExpiring = !expiringOnly || EXPIRING_TYPES.includes((ev.event_type || "").toLowerCase());
-    return matchesSearch && matchesExpiring;
-  });
+  const filtered = getFilteredEvents();
 
   const status = $("eventsStatus");
   if (!filtered.length) {
@@ -1004,6 +1031,109 @@ async function loadEvents() {
   }
 }
 
+function getFilteredEvents() {
+  const search = ($("eventSearch")?.value || "").toLowerCase();
+  const expiringOnly = $("expiringOnly")?.checked;
+  return state.events.filter((ev) => {
+    const term = `${ev.title || ""} ${ev.vendor || ""} ${ev.event_type || ""} ${ev.derived_from_term_key || ""}`.toLowerCase();
+    const matchesSearch = !search || term.includes(search);
+    const matchesExpiring = !expiringOnly || EXPIRING_TYPES.includes((ev.event_type || "").toLowerCase());
+    return matchesSearch && matchesExpiring;
+  });
+}
+
+async function exportEventsCsv() {
+  const filtered = getFilteredEvents();
+  if (!filtered.length) {
+    await showAlert("There are no events in the current view to export.", { title: "Nothing to export" });
+    return;
+  }
+  const headers = [
+    { key: "contract_id", label: "Contract ID" },
+    { key: "contract_title", label: "Contract Title" },
+    { key: "vendor", label: "Vendor" },
+    { key: "agreement_type", label: "Agreement Type" },
+    { key: "event_id", label: "Event ID" },
+    { key: "event_type", label: "Event Type" },
+    { key: "event_date", label: "Event Date" },
+    { key: "derived_from_term_key", label: "Derived Term" },
+    { key: "days_until", label: "Days Until" },
+    { key: "reminder_status", label: "Reminder Status" },
+    { key: "reminder_offsets", label: "Reminder Offsets" },
+    { key: "reminder_recipients", label: "Reminder Recipients" },
+  ];
+  const rows = filtered.map((ev) => {
+    const reminder = ev.reminder;
+    return {
+      contract_id: ev.contract_id || "",
+      contract_title: ev.title || "",
+      vendor: ev.vendor || "",
+      agreement_type: ev.agreement_type || "",
+      event_id: ev.id || "",
+      event_type: ev.event_type || "",
+      event_date: ev.event_date || "",
+      derived_from_term_key: ev.derived_from_term_key || "",
+      days_until: daysUntil(ev.event_date) ?? "",
+      reminder_status: reminder ? (reminder.enabled ? "Enabled" : "Disabled") : "Not configured",
+      reminder_offsets: reminder?.offsets?.join("; ") || "",
+      reminder_recipients: reminder?.recipients?.join("; ") || "",
+    };
+  });
+  downloadCsv(`events-${timestampForFilename()}.csv`, headers, rows);
+}
+
+async function exportPlannerCsv() {
+  if (!state.plannerEvents.length) {
+    await showAlert("There are no planner events in the current view to export.", { title: "Nothing to export" });
+    return;
+  }
+  const contractLookup = new Map(state.contracts.map((c) => [c.id, c]));
+  const headers = [
+    { key: "contract_id", label: "Contract ID" },
+    { key: "contract_title", label: "Contract Title" },
+    { key: "vendor", label: "Vendor" },
+    { key: "event_id", label: "Event ID" },
+    { key: "event_type", label: "Event Type" },
+    { key: "event_date", label: "Event Date" },
+  ];
+  const rows = state.plannerEvents.map((ev) => {
+    const contract = contractLookup.get(ev.contract_id);
+    return {
+      contract_id: ev.contract_id || "",
+      contract_title: contract?.title || "",
+      vendor: contract?.vendor || "",
+      event_id: ev.id || "",
+      event_type: ev.event_type || "",
+      event_date: ev.event_date || "",
+    };
+  });
+  downloadCsv(`planner-events-${timestampForFilename()}.csv`, headers, rows);
+}
+
+async function exportAllContractsCsv() {
+  if (!state.allContracts.length) {
+    await showAlert("There are no contracts in the current view to export.", { title: "Nothing to export" });
+    return;
+  }
+  const headers = [
+    { key: "id", label: "Contract ID" },
+    { key: "title", label: "Title" },
+    { key: "vendor", label: "Vendor" },
+    { key: "agreement_type", label: "Agreement Type" },
+    { key: "status", label: "Status" },
+    { key: "uploaded_at", label: "Uploaded At" },
+  ];
+  const rows = state.allContracts.map((c) => ({
+    id: c.id || "",
+    title: c.title || c.original_filename || "",
+    vendor: c.vendor || "",
+    agreement_type: c.agreement_type || "",
+    status: c.status || "",
+    uploaded_at: c.uploaded_at || "",
+  }));
+  downloadCsv(`contracts-${timestampForFilename()}.csv`, headers, rows);
+}
+
 function showPage(page) {
   const pages = ["contracts", "allContracts", "events", "planner"];
   state.currentPage = page;
@@ -1032,6 +1162,7 @@ function initEventsUi() {
   $("eventSearch")?.addEventListener("input", renderEvents);
   $("expiringOnly")?.addEventListener("change", renderEvents);
   $("eventsRefresh")?.addEventListener("click", loadEvents);
+  $("eventsExport")?.addEventListener("click", exportEventsCsv);
 }
 
 function renderPlannerTable() {
@@ -1151,6 +1282,7 @@ function initPlannerUi() {
   $("plannerMonth")?.addEventListener("change", loadPlannerEvents);
   $("plannerAllMonths")?.addEventListener("change", loadPlannerEvents);
   $("plannerRefresh")?.addEventListener("click", loadPlannerEvents);
+  $("plannerExport")?.addEventListener("click", exportPlannerCsv);
 }
 
 $("navContracts")?.addEventListener("click", () => showPage("contracts"));
