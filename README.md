@@ -41,6 +41,51 @@ Use the Planner to manage events across all contracts:
 * Agreement types are available at `GET /api/agreement-types` and include “Uncategorized”.
 * Term definitions are available at `GET /api/terms/definitions`; seeds include Effective Date, Renewal Date, Termination Date, Auto-Renew Opt-Out, Governing Law, Payment Terms, and “Extraction Sensitivity”.
 
+## Glossary & behaviors
+The UI and API use the following domain terms and actions. This section is meant to answer “what does this word mean in this app?”
+
+### Core data
+* **Contract**: An uploaded agreement record. Contracts can store title, vendor, agreement type, tags, and OCR text.
+* **Agreement Type**: A classification label for contracts (for example, “Uncategorized”); managed via `GET /api/agreement-types`.
+* **Tag**: A label with a color. Tags can be manually attached/detached or auto-applied based on keyword matches.
+* **Term Definition**: A catalog entry describing a term you want to extract or manage (name, key, value type, and extraction hint).
+* **Term Instance**: A term value attached to a specific contract. Each instance carries status, confidence, and a normalized value.
+* **Term Key**: The unique identifier for a term definition (for example, `renewal_date`).
+* **Value Type**: The expected datatype for a term (for example, `date`, `int`, `text`, `bool`).
+* **Status**: How a term was obtained: `smart` (OCR/extraction), `manual` (user-entered), or `inconclusive`.
+* **Confidence**: A numeric score (0–1) representing extraction certainty.
+
+### Events & scheduling
+* **Event**: A dated milestone associated with a contract (for example, renewal or termination).
+* **Event Type**: The category of the event. Standard types include `effective`, `renewal`, `termination`, and `auto_opt_out`. Custom types are allowed.
+* **Derived From Term**: The term key that produced an event (for example, an event with `derived_from_term_key = termination_date`).
+* **Reminder**: A scheduled notification tied to an event.
+* **Offset (Reminder Offset / Offset Days)**: The number of days **before** the event date that a reminder should be scheduled.  
+  *Example*: For a renewal event on 2025-06-30 and an offset of `30`, the reminder is scheduled for 2025-05-31.
+* **Scheduled For**: The computed calendar date when a reminder is due, derived from `event_date - offset_days`.
+* **Recipients**: Comma-separated email addresses that receive reminder messages.
+
+### Seeded term definitions
+The application ships with the following term definitions (all are editable or extendable):
+* **Effective Date** (`effective_date`, `date`)
+* **Renewal Date** (`renewal_date`, `date`)
+* **Termination Date** (`termination_date`, `date`)
+* **Extraction Sensitivity** (`extraction_sensitivity`, `text`)
+* **Automatic Renewal** (`automatic_renewal`, `bool`)
+* **Auto-Renew Opt-Out Days** (`auto_renew_opt_out_days`, `int`)
+* **Auto-Renew Opt-Out Date (calculated)** (`auto_renew_opt_out_date`, `date`)
+* **Termination Notice Days** (`termination_notice_days`, `int`)
+* **Governing Law** (`governing_law`, `text`)
+* **Payment Terms** (`payment_terms`, `text`)
+* **Term Length** (`term_length`, `text`)
+
+### Common actions the app supports
+* **Ingest & OCR**: Upload contracts, run OCR, and extract terms/events.
+* **Curate terms**: Add, update, or delete term instances; optionally link a term to an event.
+* **Manage events**: Add, edit, or delete events; attach reminders with offsets and recipients.
+* **Tagging**: Create tags, attach/detach them, and leverage auto-tag keywords.
+* **Search & filter**: Browse by month, event type, and search terms; toggle expiring-focused views.
+
 ## Testing
 Run a quick syntax check:
 
