@@ -747,10 +747,10 @@ function renderContractDetail(data) {
 
   document.querySelectorAll(".save-event").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const row = btn.closest("[data-event]");
+      const row = btn.closest("details[data-event]");
       const eventId = btn.dataset.event;
-      const eventDate = row.querySelector(".event-date")?.value;
-      const eventType = row.querySelector(".event-type")?.value;
+      const eventDate = row?.querySelector(".event-date")?.value;
+      const eventType = row?.querySelector(".event-type")?.value;
       try {
         await apiFetch(`/api/events/${eventId}`, {
           method: "PUT",
@@ -780,13 +780,13 @@ function renderContractDetail(data) {
 
   document.querySelectorAll(".save-reminder").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const row = btn.closest("[data-event]");
+      const row = btn.closest("details[data-event]");
       const eventId = btn.dataset.event;
-      const recipients = (row.querySelector(".reminder-recipients")?.value || "")
+      const recipients = (row?.querySelector(".reminder-recipients")?.value || "")
         .split(",")
         .map((r) => r.trim())
         .filter(Boolean);
-      const offsetsInput = row.querySelector(".reminder-offsets")?.value || "";
+      const offsetsInput = row?.querySelector(".reminder-offsets")?.value || "";
       const offsets = offsetsInput
         .split(/[\s,]+/)
         .map((o) => o.trim())
