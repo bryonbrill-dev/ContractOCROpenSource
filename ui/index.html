@@ -4,6 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ContractOCR UI</title>
+  <script>
+    tailwind = window.tailwind || {};
+    tailwind.config = { corePlugins: { preflight: false } };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
     .row { display: flex; gap: 16px; }
@@ -288,6 +293,22 @@
         </thead>
         <tbody id="plannerTable"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div id="modalOverlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4" aria-hidden="true">
+    <div class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 id="modalTitle" class="text-lg font-semibold text-slate-900">Confirm action</h3>
+          <p id="modalMessage" class="mt-2 text-sm text-slate-600"></p>
+        </div>
+        <button id="modalClose" class="text-xl text-slate-400 hover:text-slate-600" aria-label="Close dialog">×</button>
+      </div>
+      <div class="mt-6 flex flex-wrap justify-end gap-3">
+        <button id="modalCancel" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+        <button id="modalConfirm" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Confirm</button>
+      </div>
     </div>
   </div>
 
