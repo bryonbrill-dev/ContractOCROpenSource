@@ -1290,7 +1290,9 @@ def view_original(contract_id: str):
     return FileResponse(
         c["stored_path"],
         media_type=c["mime_type"],
-        filename=c["original_filename"],
+        headers={
+            "Content-Disposition": f'inline; filename="{c["original_filename"]}"'
+        },
     )
 
 
