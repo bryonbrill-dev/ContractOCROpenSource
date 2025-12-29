@@ -469,6 +469,7 @@ function renderContractDetail(data) {
           (t) => `
         <details class="section term-row" data-term="${t.term_key}">
           <summary>
+            <span class="summary-chevron" aria-hidden="true">▸</span>
             <span class="summary-title">
               ${t.name || t.term_key}
               <span class="muted small">${t.term_key}</span>
@@ -478,7 +479,6 @@ function renderContractDetail(data) {
               ${statusPill(t.status)}
               <span>${(t.confidence ?? 0).toFixed(2)}</span>
             </span>
-            <span class="summary-chevron" aria-hidden="true">▸</span>
           </summary>
           <div class="row wrap" style="gap:8px; margin-top:6px;">
             <input class="muted-input term-value" type="text" value="${t.value_normalized || t.value_raw || ""}" />
@@ -502,12 +502,12 @@ function renderContractDetail(data) {
           return `
           <details class="section" data-event="${e.id}">
             <summary>
+              <span class="summary-chevron" aria-hidden="true">▸</span>
               <span class="summary-title">
                 ${eventTypePill(e.event_type)}
                 ${e.derived_from_term_key ? `<span class="pill">From ${e.derived_from_term_key}</span>` : ""}
               </span>
               <span class="summary-meta">${formatDate(e.event_date)}</span>
-              <span class="summary-chevron" aria-hidden="true">▸</span>
             </summary>
             <div class="row wrap" style="gap:8px; margin-top:6px;">
               <input type="date" class="event-date" value="${(e.event_date || "").slice(0, 10)}" />
@@ -555,9 +555,9 @@ function renderContractDetail(data) {
 
     <details class="section" id="contractContent">
       <summary>
+        <span class="summary-chevron" aria-hidden="true">▸</span>
         <span class="summary-title">Content Preview</span>
         <span class="summary-meta">PDF or OCR text</span>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
       </summary>
       <div class="preview-grid">
         <div>
@@ -573,8 +573,8 @@ function renderContractDetail(data) {
 
     <details class="section">
       <summary>
-        <span class="summary-title">Tags</span>
         <span class="summary-chevron" aria-hidden="true">▸</span>
+        <span class="summary-title">Tags</span>
       </summary>
       <div id="contractTags">${tagHtml}</div>
       <div class="row wrap" style="gap:8px; margin-top:6px;">
@@ -590,8 +590,8 @@ function renderContractDetail(data) {
 
     <details class="section">
       <summary>
-        <span class="summary-title">Terms</span>
         <span class="summary-chevron" aria-hidden="true">▸</span>
+        <span class="summary-title">Terms</span>
       </summary>
       ${termsHtml}
       <div class="section" style="margin-top:8px;">
@@ -614,8 +614,8 @@ function renderContractDetail(data) {
 
     <details class="section">
       <summary>
-        <span class="summary-title">Events</span>
         <span class="summary-chevron" aria-hidden="true">▸</span>
+        <span class="summary-title">Events</span>
       </summary>
       ${eventsHtml}
       <div class="section" style="margin-top:8px;">
