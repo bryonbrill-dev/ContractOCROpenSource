@@ -1182,7 +1182,7 @@ async function exportAllContractsCsv() {
 }
 
 function showPage(page) {
-  const pages = ["contracts", "allContracts", "events", "planner"];
+  const pages = ["contracts", "allContracts", "events", "planner", "outputs"];
   state.currentPage = page;
   pages.forEach((p) => {
     $(p + "Page")?.classList.toggle("hidden", p !== page);
@@ -1336,6 +1336,7 @@ $("navContracts")?.addEventListener("click", () => showPage("contracts"));
 $("navAllContracts")?.addEventListener("click", () => showPage("allContracts"));
 $("navEvents")?.addEventListener("click", () => showPage("events"));
 $("navPlanner")?.addEventListener("click", () => showPage("planner"));
+$("navOutputs")?.addEventListener("click", () => showPage("outputs"));
 
 $("saveApi").addEventListener("click", async () => {
   setApiBase($("apiBase").value.trim());
