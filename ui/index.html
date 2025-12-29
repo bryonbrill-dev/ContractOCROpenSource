@@ -61,11 +61,17 @@
     .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #444; }
     .section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; background: #f8fafc; }
     details.section { padding: 8px 10px; }
-    details.section > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    details.section > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
     details.section > summary::-webkit-details-marker { display: none; }
     details.section > summary::marker { content: ""; }
-    .summary-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: bold; }
-    .summary-meta { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #6b7280; font-weight: normal; }
+    details.section[open] > summary .summary-chevron,
+    details.legend[open] > summary .summary-chevron { transform: rotate(90deg); }
+    details.legend > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+    details.legend > summary::-webkit-details-marker { display: none; }
+    details.legend > summary::marker { content: ""; }
+    .summary-title { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: bold; flex: 1 1 auto; }
+    .summary-meta { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #6b7280; font-weight: normal; margin-left: auto; }
+    .summary-chevron { font-size: 12px; color: #64748b; transition: transform 0.2s ease; margin-left: 8px; }
     .pill.tag { border-color: transparent; }
     .section h4 { margin: 0 0 6px 0; }
     .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -92,6 +98,7 @@
     <button id="navAllContracts">All Contracts</button>
     <button id="navEvents">Events</button>
     <button id="navPlanner">Planner</button>
+    <button id="navOutputs">Output Guide</button>
   </div>
 
   <div id="contractsPage">
@@ -113,7 +120,7 @@
           </div>
           <div class="muted small" style="margin-top:6px">Green = processed, Red = error, Yellow = processing</div>
           <details class="legend">
-            <summary class="small">Color key</summary>
+            <summary class="small"><span class="summary-title">Color key</span><span class="summary-chevron" aria-hidden="true">▸</span></summary>
             <div class="legend-grid">
               <div class="legend-item"><span class="badge green">processed</span> Completed processing</div>
               <div class="legend-item"><span class="badge yellow">processing</span> OCR in progress</div>
@@ -311,6 +318,55 @@
         </thead>
         <tbody id="plannerTable"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div id="outputsPage" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">Output Guide</h3>
+          <div class="muted small">How to read confidence scores, labels, and when to adjust results.</div>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:12px;">
+        <h4>Confidence scores</h4>
+        <p class="muted small">
+          Each extracted term includes a confidence score between 0.00 and 1.00. A score of 0.75 means the OCR model
+          is about 75% confident in the value. It is close, but still needs a quick human review before you rely on it.
+        </p>
+        <ul class="small" style="margin:8px 0 0 18px; color:#374151;">
+          <li><b>0.90+</b> — High confidence. Typically safe to accept with a fast spot check.</li>
+          <li><b>0.70–0.89</b> — Medium confidence. Review the source text to confirm.</li>
+          <li><b>Below 0.70</b> — Low confidence. Treat as inconclusive and verify or update manually.</li>
+        </ul>
+      </div>
+
+      <div class="section">
+        <h4>Status labels</h4>
+        <div class="row wrap" style="gap:8px;">
+          <span class="pill status-smart">smart</span>
+          <span class="pill status-manual">manual</span>
+          <span class="pill status-inconclusive">inconclusive</span>
+        </div>
+        <p class="muted small" style="margin-top:6px;">
+          <b>Smart</b> indicates OCR extraction with higher confidence. <b>Manual</b> means a user entered or confirmed the term.
+          <b>Inconclusive</b> flags lower-confidence values that should be reviewed.
+        </p>
+      </div>
+
+      <div class="section">
+        <h4>Adjusting results</h4>
+        <p class="muted small">
+          Use the Terms panel in Contract Detail to edit values, change the status, or add missing terms. Updating a term to
+          <b>manual</b> is the best way to confirm a value after review. If a term is incorrect, edit the value and save it to
+          override the OCR output.
+        </p>
+        <p class="muted small" style="margin-top:6px;">
+          You can also add or edit Events to align renewal dates, terminations, or notice deadlines that the OCR may have missed.
+        </p>
+      </div>
     </div>
   </div>
 

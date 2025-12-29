@@ -478,6 +478,7 @@ function renderContractDetail(data) {
               ${statusPill(t.status)}
               <span>${(t.confidence ?? 0).toFixed(2)}</span>
             </span>
+            <span class="summary-chevron" aria-hidden="true">▸</span>
           </summary>
           <div class="row wrap" style="gap:8px; margin-top:6px;">
             <input class="muted-input term-value" type="text" value="${t.value_normalized || t.value_raw || ""}" />
@@ -506,6 +507,7 @@ function renderContractDetail(data) {
                 ${e.derived_from_term_key ? `<span class="pill">From ${e.derived_from_term_key}</span>` : ""}
               </span>
               <span class="summary-meta">${formatDate(e.event_date)}</span>
+              <span class="summary-chevron" aria-hidden="true">▸</span>
             </summary>
             <div class="row wrap" style="gap:8px; margin-top:6px;">
               <input type="date" class="event-date" value="${(e.event_date || "").slice(0, 10)}" />
@@ -552,7 +554,11 @@ function renderContractDetail(data) {
     </div>
 
     <details class="section" id="contractContent">
-      <summary class="summary-title">Content Preview <span class="summary-meta">PDF or OCR text</span></summary>
+      <summary>
+        <span class="summary-title">Content Preview</span>
+        <span class="summary-meta">PDF or OCR text</span>
+        <span class="summary-chevron" aria-hidden="true">▸</span>
+      </summary>
       <div class="preview-grid">
         <div>
           <div class="small muted" style="margin-bottom:6px;">Document preview</div>
@@ -566,7 +572,10 @@ function renderContractDetail(data) {
     </details>
 
     <details class="section">
-      <summary class="summary-title">Tags</summary>
+      <summary>
+        <span class="summary-title">Tags</span>
+        <span class="summary-chevron" aria-hidden="true">▸</span>
+      </summary>
       <div id="contractTags">${tagHtml}</div>
       <div class="row wrap" style="gap:8px; margin-top:6px;">
         <select id="tagPicker">${tagOptions}</select>
@@ -580,7 +589,10 @@ function renderContractDetail(data) {
     </details>
 
     <details class="section">
-      <summary class="summary-title">Terms</summary>
+      <summary>
+        <span class="summary-title">Terms</span>
+        <span class="summary-chevron" aria-hidden="true">▸</span>
+      </summary>
       ${termsHtml}
       <div class="section" style="margin-top:8px;">
         <div class="muted small">Add or override a term</div>
@@ -601,7 +613,10 @@ function renderContractDetail(data) {
     </details>
 
     <details class="section">
-      <summary class="summary-title">Events</summary>
+      <summary>
+        <span class="summary-title">Events</span>
+        <span class="summary-chevron" aria-hidden="true">▸</span>
+      </summary>
       ${eventsHtml}
       <div class="section" style="margin-top:8px;">
         <div class="muted small">Add an event manually</div>
@@ -1182,7 +1197,7 @@ async function exportAllContractsCsv() {
 }
 
 function showPage(page) {
-  const pages = ["contracts", "allContracts", "events", "planner"];
+  const pages = ["contracts", "allContracts", "events", "planner", "outputs"];
   state.currentPage = page;
   pages.forEach((p) => {
     $(p + "Page")?.classList.toggle("hidden", p !== page);
@@ -1336,6 +1351,7 @@ $("navContracts")?.addEventListener("click", () => showPage("contracts"));
 $("navAllContracts")?.addEventListener("click", () => showPage("allContracts"));
 $("navEvents")?.addEventListener("click", () => showPage("events"));
 $("navPlanner")?.addEventListener("click", () => showPage("planner"));
+$("navOutputs")?.addEventListener("click", () => showPage("outputs"));
 
 $("saveApi").addEventListener("click", async () => {
   setApiBase($("apiBase").value.trim());
