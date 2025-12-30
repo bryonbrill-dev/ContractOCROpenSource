@@ -61,18 +61,26 @@
     .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #444; }
     .section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; background: #f8fafc; }
     details.section { padding: 8px 10px; }
-    details.section > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    details.section > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
     details.section > summary::-webkit-details-marker { display: none; }
     details.section > summary::marker { content: ""; }
-    details.section > summary::after,
-    details.legend > summary::after { content: "▸"; font-size: 12px; color: #64748b; transition: transform 0.2s ease; }
-    details.section[open] > summary::after,
-    details.legend[open] > summary::after { transform: rotate(90deg); }
-    details.legend > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    details.legend > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
     details.legend > summary::-webkit-details-marker { display: none; }
     details.legend > summary::marker { content: ""; }
-    .summary-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: bold; }
-    .summary-meta { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #6b7280; font-weight: normal; }
+    .summary-chevron {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #475569;
+      transition: transform 0.2s ease;
+    }
+    details.section[open] > summary .summary-chevron,
+    details.legend[open] > summary .summary-chevron { transform: rotate(90deg); }
+    .summary-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: bold; font-size: 13px; }
+    .summary-meta { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #6b7280; font-weight: normal; margin-left: auto; }
     .pill.tag { border-color: transparent; }
     .section h4 { margin: 0 0 6px 0; }
     .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -121,7 +129,7 @@
           </div>
           <div class="muted small" style="margin-top:6px">Green = processed, Red = error, Yellow = processing</div>
           <details class="legend">
-            <summary class="small"><span class="summary-title">Color key</span><span class="summary-chevron" aria-hidden="true">▸</span></summary>
+            <summary class="small"><span class="summary-chevron" aria-hidden="true">▸</span><span class="summary-title">Color key</span></summary>
             <div class="legend-grid">
               <div class="legend-item"><span class="badge green">processed</span> Completed processing</div>
               <div class="legend-item"><span class="badge yellow">processing</span> OCR in progress</div>
