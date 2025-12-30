@@ -185,7 +185,7 @@ function titleCase(text) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function abbreviateText(text, max = 18) {
+function abbreviateText(text, max = 26) {
   const safe = text || "Contract";
   if (safe.length <= max) return safe;
   return `${safe.slice(0, Math.max(0, max - 1))}…`;
