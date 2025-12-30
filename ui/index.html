@@ -82,14 +82,14 @@
     .preview-frame { width: 100%; height: 360px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
     .contract-text { max-height: 360px; overflow: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; font-size: 12px; }
     .expired-bell { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 10px; font-weight: 700; }
-    .planner-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #e5e7eb; }
+    .planner-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: visible; background: #e5e7eb; }
     .planner-cell { background: #ffffff; min-height: 110px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
     .planner-header { background: #f1f5f9; font-weight: 700; font-size: 12px; text-align: center; padding: 8px 6px; min-height: auto; }
     .planner-day { font-weight: 700; font-size: 12px; color: #1f2937; display: flex; justify-content: space-between; align-items: center; }
     .planner-day.muted { color: #9ca3af; font-weight: 600; }
     .planner-entry { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: 6px; border: 1px solid #e2e8f0; background: #f8fafc; font-size: 11px; color: #1f2937; cursor: pointer; position: relative; }
     .planner-entry:focus { outline: 2px solid #1d4ed8; outline-offset: 2px; }
-    .planner-entry:hover { box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15); }
+    .planner-entry:hover { box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15); z-index: 2; }
     .planner-entry.event-renewal { background: #ede9fe; color: #5b21b6; border-color: #c4b5fd; }
     .planner-entry.event-termination { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
     .planner-entry.event-effective { background: #e0f2fe; color: #075985; border-color: #bae6fd; }
