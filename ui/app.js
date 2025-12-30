@@ -191,6 +191,15 @@ function abbreviateText(text, max = 18) {
   return `${safe.slice(0, Math.max(0, max - 1))}…`;
 }
 
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function defaultMonthValue() {
   const d = new Date();
   const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -1310,8 +1319,16 @@ function renderPlannerCalendar() {
         const expired =
           daysUntil(ev.event_date) < 0 &&
           EXPIRING_TYPES.includes((ev.event_type || "").toLowerCase());
+        const tooltipLines = [
+          `Contract: ${label}`,
+          contract?.vendor ? `Vendor: ${contract.vendor}` : null,
+          contract?.agreement_type ? `Type: ${contract.agreement_type}` : null,
+          `Event: ${typeLabel}`,
+          `Date: ${formatDate(ev.event_date)}`,
+        ].filter(Boolean);
+        const tooltip = escapeHtml(tooltipLines.join("\n")).replace(/\n/g, "&#10;");
         return `
-          <div class="planner-entry ${typeClass}">
+          <div class="planner-entry ${typeClass}" data-contract="${ev.contract_id || ""}" data-tooltip="${tooltip}" role="button" tabindex="0">
             <div class="entry-title">${abbreviateText(label)}</div>
             <div class="entry-meta">${typeLabel}</div>
             ${expired ? `<div class="expired-bell" title="Expired">🔔 Expired</div>` : ""}
@@ -1332,6 +1349,19 @@ function renderPlannerCalendar() {
   }
 
   calendar.innerHTML = html;
+  calendar.querySelectorAll(".planner-entry[data-contract]").forEach((entry) => {
+    entry.addEventListener("click", async () => {
+      const contractId = entry.dataset.contract;
+      if (!contractId) return;
+      showPage("contracts");
+      await loadDetail(contractId);
+    });
+    entry.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      entry.click();
+    });
+  });
 }
 
 function renderPlannerTable() {
