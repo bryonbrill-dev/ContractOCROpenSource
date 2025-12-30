@@ -179,6 +179,18 @@ function daysUntil(dateStr) {
   return Math.round(diff / (1000 * 60 * 60 * 24));
 }
 
+function titleCase(text) {
+  return (text || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function abbreviateText(text, max = 18) {
+  const safe = text || "Contract";
+  if (safe.length <= max) return safe;
+  return `${safe.slice(0, Math.max(0, max - 1))}…`;
+}
+
 function defaultMonthValue() {
   const d = new Date();
   const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -1023,6 +1035,8 @@ function renderEvents() {
       const eventsHtml = f.events
         .map((ev) => {
           const days = daysUntil(ev.event_date);
+          const isExpired =
+            days !== null && days < 0 && EXPIRING_TYPES.includes((ev.event_type || "").toLowerCase());
           const relative =
             days === null
               ? ""
@@ -1033,7 +1047,13 @@ function renderEvents() {
               : `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago`;
           return `
             <div class="event-row">
-              <div class="event-date">${formatDate(ev.event_date)}<div class="small muted">${relative}</div></div>
+              <div class="event-date">
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                  ${isExpired ? `<span class="expired-bell" title="Expired">🔔 Expired</span>` : ""}
+                  <span>${formatDate(ev.event_date)}</span>
+                </div>
+                <div class="small muted">${relative}</div>
+              </div>
               <div style="flex:1">
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                   ${eventTypePill(ev.event_type)}
@@ -1227,6 +1247,93 @@ function initEventsUi() {
   $("eventsExport")?.addEventListener("click", exportEventsCsv);
 }
 
+function renderPlannerCalendar() {
+  const calendar = $("plannerCalendar");
+  if (!calendar) return;
+
+  const monthValue = $("plannerAllMonths")?.checked ? "all" : $("plannerMonth")?.value || defaultMonthValue();
+  if (monthValue === "all") {
+    calendar.innerHTML = `<div class="planner-cell" style="grid-column:1 / -1;">Select a single month to see the grid view.</div>`;
+    return;
+  }
+
+  const [yearStr, monthStr] = monthValue.split("-");
+  const year = Number.parseInt(yearStr, 10);
+  const monthIndex = Number.parseInt(monthStr, 10) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex)) {
+    calendar.innerHTML = `<div class="planner-cell" style="grid-column:1 / -1;">Invalid month selection.</div>`;
+    return;
+  }
+
+  const headers = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const firstDay = new Date(year, monthIndex, 1);
+  const startDay = firstDay.getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const prevMonthDays = new Date(year, monthIndex, 0).getDate();
+  const totalCells = Math.ceil((startDay + daysInMonth) / 7) * 7;
+
+  const entriesByDay = new Map();
+  state.plannerEvents.forEach((ev) => {
+    if (!ev.event_date) return;
+    const eventDate = new Date(ev.event_date);
+    if (Number.isNaN(eventDate.getTime())) return;
+    if (eventDate.getFullYear() !== year || eventDate.getMonth() !== monthIndex) return;
+    const day = eventDate.getDate();
+    if (!entriesByDay.has(day)) entriesByDay.set(day, []);
+    entriesByDay.get(day).push(ev);
+  });
+
+  let html = headers.map((label) => `<div class="planner-cell planner-header">${label}</div>`).join("");
+
+  for (let i = 0; i < totalCells; i += 1) {
+    const dayNumber = i - startDay + 1;
+    let displayDay = dayNumber;
+    let muted = false;
+    if (dayNumber <= 0) {
+      displayDay = prevMonthDays + dayNumber;
+      muted = true;
+    } else if (dayNumber > daysInMonth) {
+      displayDay = dayNumber - daysInMonth;
+      muted = true;
+    }
+
+    const entries = dayNumber >= 1 && dayNumber <= daysInMonth ? entriesByDay.get(dayNumber) || [] : [];
+    const visibleEntries = entries.slice(0, 3);
+    const moreCount = entries.length - visibleEntries.length;
+
+    const entriesHtml = visibleEntries
+      .map((ev) => {
+        const contract = state.contracts.find((c) => c.id === ev.contract_id);
+        const label = contract?.title || contract?.vendor || ev.title || ev.contract_id || "Contract";
+        const typeLabel = titleCase(ev.event_type || "event");
+        const typeClass = ev.event_type ? `event-${ev.event_type}` : "";
+        const expired =
+          daysUntil(ev.event_date) < 0 &&
+          EXPIRING_TYPES.includes((ev.event_type || "").toLowerCase());
+        return `
+          <div class="planner-entry ${typeClass}">
+            <div class="entry-title">${abbreviateText(label)}</div>
+            <div class="entry-meta">${typeLabel}</div>
+            ${expired ? `<div class="expired-bell" title="Expired">🔔 Expired</div>` : ""}
+          </div>
+        `;
+      })
+      .join("");
+
+    html += `
+      <div class="planner-cell">
+        <div class="planner-day ${muted ? "muted" : ""}">
+          <span>${displayDay}</span>
+        </div>
+        ${entriesHtml || `<div class="planner-empty"></div>`}
+        ${moreCount > 0 ? `<div class="planner-more">+${moreCount} more</div>` : ""}
+      </div>
+    `;
+  }
+
+  calendar.innerHTML = html;
+}
+
 function renderPlannerTable() {
   const tbody = $("plannerTable");
   if (!tbody) return;
@@ -1294,6 +1401,7 @@ async function loadPlannerEvents() {
     const res = await apiFetch(`/api/events?month=${encodeURIComponent(month)}&event_type=all&sort=date_asc`);
     state.plannerEvents = await res.json();
     if (status) status.textContent = `Loaded ${state.plannerEvents.length} events`;
+    renderPlannerCalendar();
     renderPlannerTable();
   } catch (e) {
     if (status) status.textContent = e.message;
