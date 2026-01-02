@@ -556,7 +556,7 @@ function renderContractDetail(data) {
   const hasPreview = mimeType === "application/pdf" || mimeType.startsWith("image/");
   const previewSrc = `${getApiBase()}/api/contracts/${c.id}/original`;
   const previewHtml = hasPreview
-    ? `<iframe class="preview-frame" src="${previewSrc}" title="Contract file preview"></iframe>`
+    ? `<div class="preview-pane"><iframe class="preview-frame" src="${previewSrc}" title="Contract file preview"></iframe></div>`
     : `<div class="muted small">Preview unavailable for ${mimeType || "unknown"} files. Use download to view.</div>`;
 
   const termOptions = state.definitions
