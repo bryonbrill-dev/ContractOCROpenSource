@@ -14,6 +14,7 @@ const state = {
   allContractsTypeFilter: "all",
   currentPage: "contracts",
   selectedContractId: null,
+  previewFullscreen: false,
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -140,6 +141,24 @@ function initThemeToggle() {
     applyTheme(nextTheme);
   });
   applyTheme(getPreferredTheme());
+}
+
+function setPreviewFullscreen(isActive) {
+  state.previewFullscreen = isActive;
+  document.body.classList.toggle("preview-fullscreen", isActive);
+  const toggle = $("togglePreviewFullscreen");
+  if (toggle) {
+    toggle.textContent = isActive ? "Exit full screen" : "Expand";
+    toggle.setAttribute("aria-pressed", String(isActive));
+  }
+}
+
+function initPreviewFullscreen() {
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.previewFullscreen) {
+      setPreviewFullscreen(false);
+    }
+  });
 }
 
 function badge(status) {
@@ -664,6 +683,8 @@ function renderContractDetail(data) {
         <button id="deleteContract" class="danger">Delete</button>
       `;
 
+  setPreviewFullscreen(false);
+
   $("detail").innerHTML = `
     <div><b>${c.title || c.original_filename || c.id}</b></div>
     <div class="small muted">ID: ${c.id}</div>
@@ -687,7 +708,12 @@ function renderContractDetail(data) {
       <summary>
         <span class="summary-chevron" aria-hidden="true">▸</span>
         <span class="summary-title">Content Preview</span>
-        <span class="summary-meta">PDF or OCR text</span>
+        <span class="summary-meta">
+          PDF or OCR text
+          <button id="togglePreviewFullscreen" class="link-button" type="button" aria-pressed="false">
+            Expand
+          </button>
+        </span>
       </summary>
       <div class="preview-grid">
         <div>
@@ -773,6 +799,11 @@ function renderContractDetail(data) {
       </div>
     </details>
   `;
+
+  $("togglePreviewFullscreen")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setPreviewFullscreen(!state.previewFullscreen);
+  });
 
   $("saveContractMeta")?.addEventListener("click", async () => {
     try {
@@ -1736,6 +1767,7 @@ initEventsUi();
 initPlannerUi();
 initAllContractsUi();
 initThemeToggle();
+initPreviewFullscreen();
 showPage("contracts");
 
 testApi()
