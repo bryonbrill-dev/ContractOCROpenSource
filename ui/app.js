@@ -657,18 +657,6 @@ function renderContractDetail(data) {
       <div class="row wrap" style="gap:6px;">${termSummaryHtml}</div>
     </div>
 
-    <details class="section">
-      <summary>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
-        <span class="summary-title">Advanced Details</span>
-      </summary>
-      <div style="margin-top:8px">Status: ${badge(c.status)}</div>
-      <div style="margin-top:8px;">
-        Actions:
-        <span class="inline" style="gap:8px; margin-left:6px;">${actionButtons}</span>
-      </div>
-    </details>
-
     <details class="section" id="contractContent" open>
       <summary>
         <span class="summary-chevron" aria-hidden="true">▸</span>
@@ -744,6 +732,18 @@ function renderContractDetail(data) {
           <input type="date" id="newEventDate" />
           <button id="addEvent">Add Event</button>
         </div>
+      </div>
+    </details>
+
+    <details class="section">
+      <summary>
+        <span class="summary-chevron" aria-hidden="true">▸</span>
+        <span class="summary-title">Advanced Details</span>
+      </summary>
+      <div style="margin-top:8px">Status: ${badge(c.status)}</div>
+      <div style="margin-top:8px;">
+        Actions:
+        <span class="inline" style="gap:8px; margin-left:6px;">${actionButtons}</span>
       </div>
     </details>
   `;
