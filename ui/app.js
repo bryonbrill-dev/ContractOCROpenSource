@@ -301,23 +301,25 @@ async function loadRecent() {
 
   const res = await apiFetch(`/api/search?mode=quick&q=&limit=100`);
   const rows = await res.json();
-  state.contracts = rows;
+  const processedRows = rows.filter((row) => (row.status || "").toLowerCase() === "processed").slice(0, 5);
+  state.contracts = processedRows;
 
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="muted">No contracts yet.</td></tr>`;
+  if (!processedRows.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted">No processed contracts yet.</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = rows
+  tbody.innerHTML = processedRows
     .map((r) => {
       const id = r.id;
       const title = r.title || r.original_filename || id;
+      const shortTitle = abbreviateText(title, 32);
       const uploaded = r.uploaded_at || "";
       const activeClass = id === state.selectedContractId ? "active-row" : "";
       return `
         <tr data-contract-id="${id}" class="${activeClass}">
           <td>${badge(r.status)}</td>
-          <td><a href="#" data-id="${id}" class="open">${title}</a></td>
+          <td><a href="#" data-id="${id}" class="open" title="${escapeHtml(title)}">${shortTitle}</a></td>
           <td class="small">${uploaded}</td>
           <td class="small">
             <a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>
