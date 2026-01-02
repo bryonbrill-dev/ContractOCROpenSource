@@ -11,6 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #f1f5f9; color: #0f172a; }
+    body.theme-dark { background: #0f172a; color: #e2e8f0; }
     .row { display: flex; gap: 16px; }
     .row.wrap { flex-wrap: wrap; }
     .col { flex: 1; }
@@ -116,10 +117,43 @@
     .contracts-right { display: flex; flex-direction: column; gap: 16px; }
     .compact-table th, .compact-table td { padding: 6px; font-size: 12px; }
     .compact-table th { white-space: nowrap; }
+    .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .theme-toggle { display: inline-flex; align-items: center; gap: 8px; }
+    .theme-toggle button { background: #ffffff; color: #0b3a6f; border-color: #0b3a6f; }
+    .theme-toggle button:hover { background: #f28c28; border-color: #f28c28; color: #ffffff; }
+    body.theme-dark .card { background: #111827; border-color: #1f2937; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.35); }
+    body.theme-dark .drop { background: #0b1220; border-color: #475569; }
+    body.theme-dark .nav button { background: #0f172a; color: #e2e8f0; border-color: #60a5fa; }
+    body.theme-dark .nav button.active { background: #2563eb; border-color: #2563eb; color: #ffffff; }
+    body.theme-dark input, body.theme-dark select { background: #0f172a; color: #e2e8f0; border-color: #475569; }
+    body.theme-dark table th, body.theme-dark table td { border-bottom: 1px solid #1f2937; }
+    body.theme-dark a { color: #93c5fd; }
+    body.theme-dark .muted { color: #94a3b8; }
+    body.theme-dark .section { background: #0b1220; border-color: #1f2937; }
+    body.theme-dark .legend { background: #0b1220; border-color: #1f2937; }
+    body.theme-dark .section ul { color: #cbd5f5; }
+    body.theme-dark .planner-cell { background: #0f172a; }
+    body.theme-dark .planner-header { background: #1e293b; }
+    body.theme-dark .planner-entry { background: #111827; border-color: #1f2937; color: #e2e8f0; }
+    body.theme-dark .contract-text { background: #0f172a; border-color: #1f2937; color: #e2e8f0; }
+    body.theme-dark .preview-frame { background: #0f172a; border-color: #1f2937; }
+    body.theme-dark .event-date { color: #bfdbfe; }
+    body.theme-dark #modalOverlay .bg-white { background: #0f172a; border-color: #1f2937; }
+    body.theme-dark #modalOverlay .text-slate-900 { color: #e2e8f0; }
+    body.theme-dark #modalOverlay .text-slate-600 { color: #94a3b8; }
+    body.theme-dark #modalOverlay .text-slate-400 { color: #cbd5f5; }
+    body.theme-dark #modalOverlay .border-slate-200 { border-color: #1f2937; }
+    body.theme-dark #modalOverlay .hover\:bg-slate-50:hover { background: #1e293b; }
   </style>
 </head>
 <body>
-  <h2>ContractOCR</h2>
+  <div class="top-bar">
+    <h2>ContractOCR</h2>
+    <div class="theme-toggle">
+      <span class="small muted" id="themeLabel">Theme: Light</span>
+      <button id="themeToggle" type="button">Switch to Dark Theme</button>
+    </div>
+  </div>
 
   <div class="card">
     <div class="small muted">API Base</div>
@@ -441,7 +475,7 @@
           as comma-separated addresses (for example: <code>legal@company.com, ops@company.com</code>). Use the
           <b>Offsets</b> field to define when reminders are sent relative to the event date.
         </p>
-        <ul class="small" style="margin:8px 0 0 18px; color:#374151;">
+        <ul class="small" style="margin:8px 0 0 18px;">
           <li><b>Offsets are in days before the event date.</b> An offset of <b>30</b> means the reminder sends 30 days before the event.</li>
           <li>Use multiple offsets to send multiple reminders (for example: <b>90, 60, 30, 7, 1</b>).</li>
           <li><b>0</b> sends the reminder on the event date itself.</li>
@@ -450,6 +484,19 @@
         <p class="muted small" style="margin-top:6px;">
           After saving, the reminder status in the event list will show the configured offsets and recipients.
         </p>
+      </div>
+      <div class="section">
+        <h4>Page guide</h4>
+        <p class="muted small">
+          Use this quick guide to understand what each area of the app is for and how to navigate it.
+        </p>
+        <ul class="small" style="margin:8px 0 0 18px;">
+          <li><b>Contracts</b> — Review recent uploads, open a contract detail view, edit terms, and manage events.</li>
+          <li><b>All Contracts</b> — Search, filter, and export the full contract list across all statuses.</li>
+          <li><b>Events</b> — Track renewal, termination, effective, and notice dates by month or across all months.</li>
+          <li><b>Planner</b> — Add or adjust events on a calendar grid to keep renewal timelines organized.</li>
+          <li><b>Support Page</b> — Reference color meanings, confidence guidance, and workflow tips.</li>
+        </ul>
       </div>
       <div class="section">
         <h4>Support</h4>
