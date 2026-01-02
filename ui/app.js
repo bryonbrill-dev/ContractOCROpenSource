@@ -630,22 +630,24 @@ function renderContractDetail(data) {
         .join("")
     : `<div class="muted small">No events. Add one manually below.</div>`;
 
+  const actionButtons =
+    c.status === "processed"
+      ? `<button id="deleteContract" class="danger">Delete</button>`
+      : `
+        <button id="reprocessContract">Reprocess</button>
+        <button id="deleteContract" class="danger">Delete</button>
+      `;
+
   $("detail").innerHTML = `
     <div><b>${c.title || c.original_filename || c.id}</b></div>
     <div class="small muted">ID: ${c.id}</div>
     <div style="margin-top:8px">Status: ${badge(c.status)}</div>
-    <div class="inline" style="gap:8px; margin-top:8px;">
-      <button id="reprocessContract">Reprocess</button>
-      <button id="deleteContract" class="danger">Delete</button>
+    <div style="margin-top:8px;">
+      Actions:
+      <span class="inline" style="gap:8px; margin-left:6px;">${actionButtons}</span>
     </div>
     <div class="small muted" style="margin-top:4px;">Agreement Type: <span class="pill">${agreementType}</span></div>
     <div class="section" style="margin-top:10px;">
-      <h4>Extracted Terms</h4>
-      <div class="row wrap" style="gap:6px;">${termSummaryHtml}</div>
-    </div>
-
-    <div class="section">
-      <h4>Contract Info</h4>
       <div class="row wrap" style="gap:8px;">
         <input id="contractTitle" class="muted-input" type="text" placeholder="Title" value="${c.title || ""}" />
         <input id="contractVendor" class="muted-input" type="text" placeholder="Vendor" value="${vendorAutoValue || ""}" />
@@ -654,6 +656,10 @@ function renderContractDetail(data) {
         </select>
         <button id="saveContractMeta">Save</button>
       </div>
+    </div>
+    <div class="section">
+      <h4>Extracted Terms</h4>
+      <div class="row wrap" style="gap:6px;">${termSummaryHtml}</div>
     </div>
 
     <details class="section" id="contractContent" open>
