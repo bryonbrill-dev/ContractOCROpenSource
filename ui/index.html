@@ -112,6 +112,10 @@
     .danger:hover { background: #b91c1c; border-color: #b91c1c; }
     .month-nav { display: inline-flex; gap: 6px; align-items: center; }
     .month-nav button { padding: 6px 8px; }
+    .contracts-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+    .contracts-right { display: flex; flex-direction: column; gap: 16px; }
+    .compact-table th, .compact-table td { padding: 6px; font-size: 12px; }
+    .compact-table th { white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -133,24 +137,25 @@
   </div>
 
   <div id="contractsPage">
-    <div class="row" style="margin-top:16px">
-      <div class="col">
+    <div class="contracts-layout" style="margin-top:16px">
+      <div class="card">
+        <h3 style="margin-top:0">Contract Detail</h3>
+        <div id="detail" class="muted">Click a contract to view terms/events.</div>
+      </div>
+
+      <div class="contracts-right">
         <div class="card">
           <h3 style="margin-top:0">Upload</h3>
           <div id="drop" class="drop">Drag & drop PDF(s) here, or click to choose</div>
           <input id="filePicker" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" style="display:none" />
           <div id="uploadLog" class="small muted" style="margin-top:10px"></div>
         </div>
-      </div>
-
-      <div class="col">
         <div class="card">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <h3 style="margin:0">Recent Contracts</h3>
             <button id="refresh">Refresh</button>
           </div>
-          <div class="muted small" style="margin-top:6px">Showing the 100 most recent uploads (newest first).</div>
-          <div class="muted small" style="margin-top:4px">Green = processed, Red = error, Yellow = processing</div>
+          <div class="muted small" style="margin-top:6px">Showing 5 most recent processed contracts.</div>
           <details class="legend">
             <summary class="small"><span class="summary-chevron" aria-hidden="true">▸</span><span class="summary-title">Color key</span></summary>
             <div class="legend-grid">
@@ -167,7 +172,7 @@
             </div>
             <div class="muted small" style="margin-top:6px;">Tag colors come from the tag settings.</div>
           </details>
-          <table style="margin-top:10px">
+          <table class="compact-table" style="margin-top:10px">
             <thead>
               <tr>
                 <th>Status</th>
@@ -180,11 +185,6 @@
           </table>
         </div>
       </div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <h3 style="margin-top:0">Contract Detail</h3>
-      <div id="detail" class="muted">Click a contract to view terms/events.</div>
     </div>
   </div>
 
