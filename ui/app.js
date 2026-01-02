@@ -1413,6 +1413,20 @@ function initEventsUi() {
   $("eventSort")?.addEventListener("change", loadEvents);
   $("eventSearch")?.addEventListener("input", renderEvents);
   $("expiringOnly")?.addEventListener("change", renderEvents);
+  $("eventPrevMonth")?.addEventListener("click", () => {
+    const input = $("eventMonth");
+    if (!input) return;
+    if ($("eventAllMonths")) $("eventAllMonths").checked = false;
+    input.value = shiftMonthValue(input.value, -1);
+    loadEvents();
+  });
+  $("eventNextMonth")?.addEventListener("click", () => {
+    const input = $("eventMonth");
+    if (!input) return;
+    if ($("eventAllMonths")) $("eventAllMonths").checked = false;
+    input.value = shiftMonthValue(input.value, 1);
+    loadEvents();
+  });
   $("eventsRefresh")?.addEventListener("click", loadEvents);
   $("eventsExport")?.addEventListener("click", exportEventsCsv);
 }

@@ -202,9 +202,13 @@
           </div>
 
           <div class="row wrap filters" style="margin-top:12px; gap:12px;">
-            <label style="min-width:140px;">
-              Month
-              <input id="eventMonth" type="month" />
+            <label style="min-width:220px;">
+              Show Month
+              <div class="month-nav">
+                <button type="button" id="eventPrevMonth">◀</button>
+                <input id="eventMonth" type="month" />
+                <button type="button" id="eventNextMonth">▶</button>
+              </div>
             </label>
             <label style="min-width:140px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
               <input type="checkbox" id="eventAllMonths" />
