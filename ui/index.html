@@ -10,12 +10,12 @@
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f1f5f9; color: #0f172a; }
     .row { display: flex; gap: 16px; }
     .row.wrap { flex-wrap: wrap; }
     .col { flex: 1; }
-    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; background: #fff; }
-    .drop { border: 2px dashed #888; border-radius: 10px; padding: 18px; text-align: center; cursor: pointer; }
+    .card { border: 1px solid #dbe2f0; border-radius: 10px; padding: 12px; background: #fff; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06); }
+    .drop { border: 2px dashed #94a3b8; border-radius: 10px; padding: 18px; text-align: center; cursor: pointer; background: #f8fafc; }
     .drop.drag { background: #f3f6ff; }
     table { width: 100%; border-collapse: collapse; }
     th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
@@ -49,7 +49,7 @@
     .pill { background: #eef2ff; color: #2e3b8b; padding: 4px 8px; border-radius: 999px; font-size: 11px; border: 1px solid #d0d7ff; }
     .event-type { background: #e3f2fd; color: #1565c0; border-color: #bbdefb; }
     .status-smart { background: #dcfce7; color: #166534; border-color: #86efac; }
-    .status-manual { background: #fef9c3; color: #854d0e; border-color: #fde047; }
+    .status-manual { background: #fef3c7; color: #92400e; border-color: #fcd34d; font-weight: 700; }
     .status-inconclusive { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
     .event-renewal { background: #ede9fe; color: #5b21b6; border-color: #c4b5fd; }
     .event-termination { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
@@ -77,6 +77,8 @@
     .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .muted-input { width: 100%; box-sizing: border-box; }
     .chip-btn { background: none; border: none; cursor: pointer; color: #b91c1c; margin-left: 6px; }
+    .link-button { background: none; border: none; color: #1d4ed8; cursor: pointer; font-weight: 600; padding: 0; }
+    .link-button:hover { text-decoration: underline; }
     .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 999px; border: 1px solid #94a3b8; color: #475569; font-size: 11px; line-height: 1; cursor: help; }
     .preview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
     .preview-frame { width: 100%; height: 360px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
@@ -101,6 +103,15 @@
     .planner-entry .entry-meta { font-size: 10px; color: #475569; }
     .planner-more { font-size: 10px; color: #2563eb; }
     .planner-empty { min-height: 20px; }
+    .active-row { background: #fef9c3; }
+    .manual-term > summary { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px; }
+    .event-date-group { background: #f8fafc; }
+    .event-date-body { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+    .event-contract-body { margin-top: 6px; border-left: 3px solid #c7d2fe; padding-left: 10px; }
+    .danger { background: #dc2626; border-color: #dc2626; }
+    .danger:hover { background: #b91c1c; border-color: #b91c1c; }
+    .month-nav { display: inline-flex; gap: 6px; align-items: center; }
+    .month-nav button { padding: 6px 8px; }
   </style>
 </head>
 <body>
@@ -118,7 +129,7 @@
     <button id="navAllContracts">All Contracts</button>
     <button id="navEvents">Events</button>
     <button id="navPlanner">Planner</button>
-    <button id="navOutputs">Output Guide</button>
+    <button id="navOutputs">Support Page</button>
   </div>
 
   <div id="contractsPage">
@@ -138,7 +149,8 @@
             <h3 style="margin:0">Recent Contracts</h3>
             <button id="refresh">Refresh</button>
           </div>
-          <div class="muted small" style="margin-top:6px">Green = processed, Red = error, Yellow = processing</div>
+          <div class="muted small" style="margin-top:6px">Showing the 100 most recent uploads (newest first).</div>
+          <div class="muted small" style="margin-top:4px">Green = processed, Red = error, Yellow = processing</div>
           <details class="legend">
             <summary class="small"><span class="summary-chevron" aria-hidden="true">▸</span><span class="summary-title">Color key</span></summary>
             <div class="legend-grid">
@@ -180,8 +192,8 @@
     <div class="card" style="margin-top:16px">
           <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
             <div>
-              <h3 style="margin:0">Expiring Events</h3>
-              <div class="muted small">Search and review renewal/termination timelines like nested folders.</div>
+              <h3 style="margin:0">Upcoming Events</h3>
+              <div class="muted small">Search and review renewal/termination timelines by date and contract.</div>
             </div>
             <div class="inline">
               <button id="eventsRefresh">Refresh</button>
@@ -224,7 +236,7 @@
         </label>
         <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
           <input type="checkbox" id="expiringOnly" />
-          Expiring-focused only
+          Expiring-only
           <span class="info-icon" title="Filters to renewal, termination, and auto opt-out deadlines so evergreen contracts stay out of the list unless they have a defined notice or end date.">i</span>
         </label>
       </div>
@@ -244,7 +256,6 @@
         <div class="inline">
           <button id="allRefresh">Refresh</button>
           <button id="allContractsExport">Export CSV</button>
-          <button id="reprocessAll">Reprocess all</button>
         </div>
       </div>
 
@@ -253,10 +264,22 @@
           Search
           <input id="allContractsSearch" type="text" placeholder="Search contracts..." />
         </label>
+        <label style="min-width:160px;">
+          Status
+          <select id="allContractsStatus"></select>
+        </label>
+        <label style="min-width:200px;">
+          Contract Type
+          <select id="allContractsType"></select>
+        </label>
       </div>
-      <div class="muted small" style="margin-top:6px;">
-        Reprocess all runs OCR again for every contract and is not recommended for large databases.
-      </div>
+      <details class="legend" style="margin-top:10px;">
+        <summary class="small"><span class="summary-chevron" aria-hidden="true">▸</span><span class="summary-title">Advanced actions</span></summary>
+        <div class="muted small">Reprocess all runs OCR again for every contract and may take a long time on large databases.</div>
+        <div style="margin-top:8px;">
+          <button id="reprocessAll">Reprocess all</button>
+        </div>
+      </details>
       <div class="muted small" id="allContractsStatus" style="margin-top:4px"></div>
       <table style="margin-top:10px">
         <thead>
@@ -264,6 +287,7 @@
             <th>Status</th>
             <th>Title</th>
             <th>Vendor</th>
+            <th>Contract Type</th>
             <th>Uploaded</th>
             <th>Actions</th>
           </tr>
@@ -290,6 +314,21 @@
       </div>
 
       <div class="row wrap filters" style="margin-top:12px; gap:12px;">
+        <label style="min-width:220px;">
+          Show Month
+          <div class="month-nav">
+            <button type="button" id="plannerPrevMonth">◀</button>
+            <input type="month" id="plannerMonth" />
+            <button type="button" id="plannerNextMonth">▶</button>
+          </div>
+        </label>
+        <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
+          <input type="checkbox" id="plannerAllMonths" />
+          Show all months
+        </label>
+      </div>
+
+      <div class="row wrap filters" style="margin-top:8px; gap:12px;">
         <label style="min-width:200px;">
           Contract
           <select id="plannerContract"></select>
@@ -313,17 +352,6 @@
           <input type="text" id="plannerCustomType" placeholder="e.g., Notice" />
         </label>
         <button id="plannerAdd">Add Event</button>
-      </div>
-
-      <div class="row wrap filters" style="margin-top:8px; gap:12px;">
-        <label style="min-width:160px;">
-          Show Month
-          <input type="month" id="plannerMonth" />
-        </label>
-        <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
-          <input type="checkbox" id="plannerAllMonths" />
-          Show all months
-        </label>
       </div>
 
       <div class="muted small" id="plannerStatus" style="margin-top:4px"></div>
@@ -350,8 +378,24 @@
     <div class="card" style="margin-top:16px">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
         <div>
-          <h3 style="margin:0">Output Guide</h3>
-          <div class="muted small">How to read confidence scores, labels, and when to adjust results.</div>
+          <h3 style="margin:0">Support Page</h3>
+          <div class="muted small">How to read confidence scores, labels, and where to get help.</div>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:12px;">
+        <h4>Color key</h4>
+        <div class="legend-grid">
+          <div class="legend-item"><span class="badge green">processed</span> Completed processing</div>
+          <div class="legend-item"><span class="badge yellow">processing</span> OCR in progress</div>
+          <div class="legend-item"><span class="badge red">error</span> Processing error</div>
+          <div class="legend-item"><span class="pill status-smart">smart</span> High-confidence extraction</div>
+          <div class="legend-item"><span class="pill status-manual">manual</span> Manually entered</div>
+          <div class="legend-item"><span class="pill status-inconclusive">inconclusive</span> Low confidence</div>
+          <div class="legend-item"><span class="pill event-type event-effective">effective</span> Key date</div>
+          <div class="legend-item"><span class="pill event-type event-renewal">renewal</span> Renewal timeline</div>
+          <div class="legend-item"><span class="pill event-type event-termination">termination</span> Termination date</div>
+          <div class="legend-item"><span class="pill event-type event-auto_opt_out">auto opt-out</span> Notice deadline</div>
         </div>
       </div>
 
@@ -409,6 +453,10 @@
         <p class="muted small" style="margin-top:6px;">
           After saving, the reminder status in the event list will show the configured offsets and recipients.
         </p>
+      </div>
+      <div class="section">
+        <h4>Support</h4>
+        <p class="muted small">Questions or issues? Email <a href="mailto:<PLACEHOLDERFOREMAIL>"><PLACEHOLDERFOREMAIL></a>.</p>
       </div>
     </div>
   </div>

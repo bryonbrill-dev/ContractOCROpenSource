@@ -10,7 +10,10 @@ const state = {
   allContractsQuery: "",
   allContractsOffset: 0,
   allContractsLimit: 200,
+  allContractsStatusFilter: "all",
+  allContractsTypeFilter: "all",
   currentPage: "contracts",
+  selectedContractId: null,
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -206,6 +209,18 @@ function defaultMonthValue() {
   return `${d.getFullYear()}-${month}`;
 }
 
+function shiftMonthValue(value, delta) {
+  const [yearStr, monthStr] = (value || defaultMonthValue()).split("-");
+  const year = Number.parseInt(yearStr, 10);
+  const monthIndex = Number.parseInt(monthStr, 10) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex)) {
+    return defaultMonthValue();
+  }
+  const date = new Date(year, monthIndex + delta, 1);
+  const newMonth = String(date.getMonth() + 1).padStart(2, "0");
+  return `${date.getFullYear()}-${newMonth}`;
+}
+
 function setApiUi() {
   $("apiBase").value = getApiBase();
   $("apiStatus").textContent = "";
@@ -230,6 +245,7 @@ async function loadReferenceData() {
   state.definitions = await defsRes.json();
   state.tags = await tagsRes.json();
   state.agreementTypes = await agRes.json();
+  renderAllContractsFilters();
 }
 
 async function loadContractsList() {
@@ -253,6 +269,31 @@ function optionList(values, selectedValue) {
     .join("");
 }
 
+function updateSelectedRows() {
+  document.querySelectorAll("[data-contract-id]").forEach((row) => {
+    row.classList.toggle("active-row", row.dataset.contractId === state.selectedContractId);
+  });
+}
+
+function renderAllContractsFilters() {
+  const statusSelect = $("allContractsStatus");
+  const typeSelect = $("allContractsType");
+  if (statusSelect) {
+    const options = ["all", "processed", "processing", "error"];
+    statusSelect.innerHTML = options
+      .map((opt) => `<option value="${opt}">${titleCase(opt)}</option>`)
+      .join("");
+    statusSelect.value = state.allContractsStatusFilter;
+  }
+  if (typeSelect) {
+    const options = ["all", ...(state.agreementTypes.length ? state.agreementTypes : ["Uncategorized"])];
+    typeSelect.innerHTML = options
+      .map((opt) => `<option value="${opt}">${opt === "all" ? "All types" : opt}</option>`)
+      .join("");
+    typeSelect.value = state.allContractsTypeFilter;
+  }
+}
+
 async function loadRecent() {
   const tbody = $("contracts");
   if (!tbody) return;
@@ -272,8 +313,9 @@ async function loadRecent() {
       const id = r.id;
       const title = r.title || r.original_filename || id;
       const uploaded = r.uploaded_at || "";
+      const activeClass = id === state.selectedContractId ? "active-row" : "";
       return `
-        <tr>
+        <tr data-contract-id="${id}" class="${activeClass}">
           <td>${badge(r.status)}</td>
           <td><a href="#" data-id="${id}" class="open">${title}</a></td>
           <td class="small">${uploaded}</td>
@@ -281,6 +323,8 @@ async function loadRecent() {
             <a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>
             &nbsp;|&nbsp;
             <a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>
+            &nbsp;|&nbsp;
+            <button class="delete-contract danger" data-id="${id}" data-title="${escapeHtml(title)}">Delete</button>
           </td>
         </tr>
       `;
@@ -293,13 +337,20 @@ async function loadRecent() {
       await loadDetail(a.dataset.id);
     });
   });
+
+  document.querySelectorAll(".delete-contract").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await deleteContract(btn.dataset.id, btn.dataset.title);
+    });
+  });
+  updateSelectedRows();
 }
 
 function renderAllContractsTable(rows, append = false) {
   const tbody = $("allContractsTable");
   if (!tbody) return;
   if (!rows.length && !append) {
-    tbody.innerHTML = `<tr><td colspan="5" class="muted">No contracts found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="muted">No contracts found.</td></tr>`;
     return;
   }
 
@@ -308,11 +359,13 @@ function renderAllContractsTable(rows, append = false) {
       const id = r.id;
       const title = r.title || r.original_filename || id;
       const uploaded = r.uploaded_at || "";
+      const activeClass = id === state.selectedContractId ? "active-row" : "";
       return `
-        <tr>
+        <tr data-contract-id="${id}" class="${activeClass}">
           <td>${badge(r.status)}</td>
           <td><a href="#" data-id="${id}" class="open-contract">${title}</a></td>
           <td class="small">${r.vendor || ""}</td>
+          <td class="small">${r.agreement_type || "Uncategorized"}</td>
           <td class="small">${uploaded}</td>
           <td class="small">
             <a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>
@@ -320,6 +373,8 @@ function renderAllContractsTable(rows, append = false) {
             <a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>
             &nbsp;|&nbsp;
             <button class="reprocess-btn" data-id="${id}">Reprocess</button>
+            &nbsp;|&nbsp;
+            <button class="delete-contract danger" data-id="${id}" data-title="${escapeHtml(title)}">Delete</button>
           </td>
         </tr>
       `;
@@ -345,6 +400,14 @@ function renderAllContractsTable(rows, append = false) {
       await reprocessContract(btn.dataset.id);
     });
   });
+
+  document.querySelectorAll(".delete-contract").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await deleteContract(btn.dataset.id, btn.dataset.title);
+    });
+  });
+
+  updateSelectedRows();
 }
 
 async function loadAllContracts(reset = true) {
@@ -361,6 +424,12 @@ async function loadAllContracts(reset = true) {
     offset: String(state.allContractsOffset),
     include_tags: "false",
   });
+  if (state.allContractsStatusFilter && state.allContractsStatusFilter !== "all") {
+    params.set("status", state.allContractsStatusFilter);
+  }
+  if (state.allContractsTypeFilter && state.allContractsTypeFilter !== "all") {
+    params.set("agreement_type", state.allContractsTypeFilter);
+  }
   if (state.allContractsQuery) {
     params.set("q", state.allContractsQuery);
     params.set("mode", "quick");
@@ -395,6 +464,16 @@ function initAllContractsUi() {
       state.allContractsQuery = search.value.trim();
       loadAllContracts(true);
     }, 300);
+  });
+
+  $("allContractsStatus")?.addEventListener("change", (event) => {
+    state.allContractsStatusFilter = event.target.value;
+    loadAllContracts(true);
+  });
+
+  $("allContractsType")?.addEventListener("change", (event) => {
+    state.allContractsTypeFilter = event.target.value;
+    loadAllContracts(true);
   });
 
   $("allRefresh")?.addEventListener("click", () => loadAllContracts(true));
@@ -488,7 +567,7 @@ function renderContractDetail(data) {
     ? terms
         .map(
           (t) => `
-        <details class="section term-row" data-term="${t.term_key}">
+        <details class="section term-row ${t.status === "manual" ? "manual-term" : ""}" data-term="${t.term_key}">
           <summary>
             <span class="summary-chevron" aria-hidden="true">▸</span>
             <span class="summary-title">
@@ -555,6 +634,7 @@ function renderContractDetail(data) {
     <div style="margin-top:8px">Status: ${badge(c.status)}</div>
     <div class="inline" style="gap:8px; margin-top:8px;">
       <button id="reprocessContract">Reprocess</button>
+      <button id="deleteContract" class="danger">Delete</button>
     </div>
     <div class="small muted" style="margin-top:4px;">Agreement Type: <span class="pill">${agreementType}</span></div>
     <div class="section" style="margin-top:10px;">
@@ -574,7 +654,7 @@ function renderContractDetail(data) {
       </div>
     </div>
 
-    <details class="section" id="contractContent">
+    <details class="section" id="contractContent" open>
       <summary>
         <span class="summary-chevron" aria-hidden="true">▸</span>
         <span class="summary-title">Content Preview</span>
@@ -597,6 +677,7 @@ function renderContractDetail(data) {
         <span class="summary-chevron" aria-hidden="true">▸</span>
         <span class="summary-title">Tags</span>
       </summary>
+      <div class="muted small">Create company-specific tags (e.g., BCBS, Deer Run) to group related contracts.</div>
       <div id="contractTags">${tagHtml}</div>
       <div class="row wrap" style="gap:8px; margin-top:6px;">
         <select id="tagPicker">${tagOptions}</select>
@@ -671,13 +752,21 @@ function renderContractDetail(data) {
   });
 
   $("reprocessContract")?.addEventListener("click", () => reprocessContract(c.id));
+  $("deleteContract")?.addEventListener("click", () => deleteContract(c.id, c.title || c.original_filename || c.id));
 
   const contentDetails = $("contractContent");
   if (contentDetails) {
-    contentDetails.addEventListener("toggle", () => {
-      if (!contentDetails.open || contentDetails.dataset.loaded) return;
+    const loadPreview = () => {
+      if (contentDetails.dataset.loaded) return;
       contentDetails.dataset.loaded = "true";
       loadContractText(c.id);
+    };
+    if (contentDetails.open) {
+      loadPreview();
+    }
+    contentDetails.addEventListener("toggle", () => {
+      if (!contentDetails.open) return;
+      loadPreview();
     });
   }
 
@@ -939,9 +1028,36 @@ async function reprocessContract(contractId) {
   }
 }
 
+async function deleteContract(contractId, title = "this contract") {
+  const ok = await showConfirm(`Delete "${title}"? This removes the file and all extracted data.`, {
+    confirmText: "Delete",
+    cancelText: "Cancel",
+  });
+  if (!ok) return;
+  try {
+    await apiFetch(`/api/contracts/${contractId}`, { method: "DELETE" });
+    if (state.selectedContractId === contractId) {
+      state.selectedContractId = null;
+      const detail = $("detail");
+      if (detail) {
+        detail.innerHTML = `<div class="muted">Select a contract to view details.</div>`;
+      }
+    }
+    await loadRecent();
+    if (state.currentPage === "allContracts") {
+      await loadAllContracts(true);
+    }
+    updateSelectedRows();
+  } catch (e) {
+    await showAlert(e.message, { title: "Delete failed" });
+  }
+}
+
 async function loadDetail(id) {
   const detail = $("detail");
   detail.innerHTML = "Loading…";
+  state.selectedContractId = id;
+  updateSelectedRows();
   try {
     if (!state.definitions.length || !state.tags.length || !state.agreementTypes.length) {
       await loadReferenceData();
@@ -949,6 +1065,7 @@ async function loadDetail(id) {
     const res = await apiFetch(`/api/contracts/${id}`);
     const data = await res.json();
     renderContractDetail(data);
+    $("detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     detail.innerHTML = `<div class="badge red">error</div><pre>${e.message}</pre>`;
   }
@@ -1014,6 +1131,7 @@ function renderEvents() {
   if (!list) return;
 
   const filtered = getFilteredEvents();
+  const sort = $("eventSort")?.value || "date_asc";
 
   const status = $("eventsStatus");
   if (!filtered.length) {
@@ -1022,10 +1140,26 @@ function renderEvents() {
     return;
   }
 
-  const grouped = new Map();
-  filtered.forEach((ev) => {
-    if (!grouped.has(ev.contract_id)) {
-      grouped.set(ev.contract_id, {
+  const sorted = [...filtered].sort((a, b) => {
+    const dir = sort.endsWith("desc") ? -1 : 1;
+    if (sort.startsWith("title")) {
+      return (a.title || "").localeCompare(b.title || "") * dir;
+    }
+    return (a.event_date || "").localeCompare(b.event_date || "") * dir;
+  });
+
+  const dateGroups = new Map();
+  sorted.forEach((ev) => {
+    const dateKey = ev.event_date || "unknown";
+    if (!dateGroups.has(dateKey)) {
+      dateGroups.set(dateKey, {
+        date: ev.event_date,
+        contracts: new Map(),
+      });
+    }
+    const dateGroup = dateGroups.get(dateKey);
+    if (!dateGroup.contracts.has(ev.contract_id)) {
+      dateGroup.contracts.set(ev.contract_id, {
         contractId: ev.contract_id,
         title: ev.title || ev.contract_id,
         vendor: ev.vendor || "Unknown vendor",
@@ -1033,71 +1167,96 @@ function renderEvents() {
         events: [],
       });
     }
-    grouped.get(ev.contract_id).events.push(ev);
+    dateGroup.contracts.get(ev.contract_id).events.push(ev);
   });
 
-  const folders = Array.from(grouped.values());
-  folders.forEach((f) => f.events.sort((a, b) => (a.event_date || "").localeCompare(b.event_date || "")));
+  const dateGroupList = Array.from(dateGroups.values());
 
-  list.innerHTML = folders
-    .map((f) => {
-      const eventsHtml = f.events
-        .map((ev) => {
-          const days = daysUntil(ev.event_date);
-          const isExpired =
-            days !== null && days < 0 && EXPIRING_TYPES.includes((ev.event_type || "").toLowerCase());
-          const relative =
-            days === null
-              ? ""
-              : days === 0
-              ? "Today"
-              : days > 0
-              ? `In ${days} day${days === 1 ? "" : "s"}`
-              : `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago`;
+  list.innerHTML = dateGroupList
+    .map((group, groupIndex) => {
+      const contractsHtml = Array.from(group.contracts.values())
+        .map((contract) => {
+          const eventsHtml = contract.events
+            .map((ev) => {
+              const days = daysUntil(ev.event_date);
+              const isExpired =
+                days !== null && days < 0 && EXPIRING_TYPES.includes((ev.event_type || "").toLowerCase());
+              const relative =
+                days === null
+                  ? ""
+                  : days === 0
+                  ? "Today"
+                  : days > 0
+                  ? `In ${days} day${days === 1 ? "" : "s"}`
+                  : `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago`;
+              return `
+                <div class="event-row">
+                  <div class="event-date">
+                    <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                      ${isExpired ? `<span class="expired-bell" title="Expired">🔔 Expired</span>` : ""}
+                      <span>${relative || "Upcoming"}</span>
+                    </div>
+                  </div>
+                  <div style="flex:1">
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                      ${eventTypePill(ev.event_type)}
+                      ${ev.derived_from_term_key ? `<span class="pill">From ${ev.derived_from_term_key}</span>` : ""}
+                    </div>
+                    <div class="small muted" style="margin-top:4px;">${reminderText(ev.reminder)}</div>
+                  </div>
+                </div>
+              `;
+            })
+            .join("");
+
           return `
-            <div class="event-row">
-              <div class="event-date">
-                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                  ${isExpired ? `<span class="expired-bell" title="Expired">🔔 Expired</span>` : ""}
-                  <span>${formatDate(ev.event_date)}</span>
-                </div>
-                <div class="small muted">${relative}</div>
+            <details class="section event-contract" data-contract="${contract.contractId}">
+              <summary>
+                <span class="summary-chevron" aria-hidden="true">▸</span>
+                <span class="summary-title">
+                  <button type="button" class="link-button open-contract" data-id="${contract.contractId}">
+                    ${contract.title}
+                  </button>
+                </span>
+                <span class="summary-meta">
+                  <span class="muted small">${contract.vendor}</span>
+                  ${contract.agreement_type ? `<span class="pill">${contract.agreement_type}</span>` : ""}
+                  <span class="pill">${contract.events.length} event${contract.events.length === 1 ? "" : "s"}</span>
+                </span>
+              </summary>
+              <div class="event-contract-body">
+                ${eventsHtml}
               </div>
-              <div style="flex:1">
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                  ${eventTypePill(ev.event_type)}
-                  ${ev.derived_from_term_key ? `<span class="pill">From ${ev.derived_from_term_key}</span>` : ""}
-                </div>
-                <div class="small muted" style="margin-top:4px;">${reminderText(ev.reminder)}</div>
-              </div>
-            </div>
+            </details>
           `;
         })
         .join("");
 
       return `
-        <div class="folder-card">
-          <div class="folder-header">
-            <div>
-              <div class="folder-title">${f.title}</div>
-              <div class="muted small">${f.vendor}</div>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              ${f.agreement_type ? `<span class="pill">${f.agreement_type}</span>` : ""}
-              <span class="pill">${f.events.length} event${f.events.length === 1 ? "" : "s"}</span>
-            </div>
+        <details class="section event-date-group"${groupIndex === 0 ? " open" : ""}>
+          <summary>
+            <span class="summary-chevron" aria-hidden="true">▸</span>
+            <span class="summary-title">${formatDate(group.date)}</span>
+            <span class="summary-meta">${group.contracts.size} contract${group.contracts.size === 1 ? "" : "s"}</span>
+          </summary>
+          <div class="event-date-body">
+            ${contractsHtml}
           </div>
-          <div class="folder-body">
-            ${eventsHtml}
-          </div>
-        </div>
+        </details>
       `;
     })
     .join("");
 
   if (status) {
-    status.textContent = `Showing ${filtered.length} event${filtered.length === 1 ? "" : "s"} across ${folders.length} contract${folders.length === 1 ? "" : "s"}.`;
+    status.textContent = `Showing ${filtered.length} event${filtered.length === 1 ? "" : "s"} across ${dateGroupList.length} date${dateGroupList.length === 1 ? "" : "s"}.`;
   }
+
+  document.querySelectorAll(".open-contract").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await loadDetail(btn.dataset.id);
+      showPage("contracts");
+    });
+  });
 }
 
 async function loadEvents() {
@@ -1481,6 +1640,20 @@ function initPlannerUi() {
 
   $("plannerMonth")?.addEventListener("change", loadPlannerEvents);
   $("plannerAllMonths")?.addEventListener("change", loadPlannerEvents);
+  $("plannerPrevMonth")?.addEventListener("click", () => {
+    const input = $("plannerMonth");
+    if (!input) return;
+    if ($("plannerAllMonths")) $("plannerAllMonths").checked = false;
+    input.value = shiftMonthValue(input.value, -1);
+    loadPlannerEvents();
+  });
+  $("plannerNextMonth")?.addEventListener("click", () => {
+    const input = $("plannerMonth");
+    if (!input) return;
+    if ($("plannerAllMonths")) $("plannerAllMonths").checked = false;
+    input.value = shiftMonthValue(input.value, 1);
+    loadPlannerEvents();
+  });
   $("plannerRefresh")?.addEventListener("click", loadPlannerEvents);
   $("plannerExport")?.addEventListener("click", exportPlannerCsv);
 }
