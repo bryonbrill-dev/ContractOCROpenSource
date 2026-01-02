@@ -1122,6 +1122,34 @@ def update_contract(contract_id: str, payload: ContractUpdate):
 
     return get_contract(contract_id)
 
+
+@app.delete("/api/contracts/{contract_id}")
+def delete_contract(contract_id: str):
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT id, stored_path FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
+        conn.execute("DELETE FROM contracts_fts WHERE contract_id = ?", (contract_id,))
+
+    stored_path = existing["stored_path"]
+    if stored_path and os.path.exists(stored_path):
+        try:
+            os.remove(stored_path)
+        except OSError as exc:
+            logger.warning(
+                "Failed to delete stored file %s for contract %s: %s",
+                stored_path,
+                contract_id,
+                exc,
+            )
+
+    return {"deleted": contract_id}
+
 # ----------------------------
 # Contract detail
 # ----------------------------
