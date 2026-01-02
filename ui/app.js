@@ -116,6 +116,32 @@ function setApiBase(v) {
   localStorage.setItem("apiBase", v);
 }
 
+const THEME_STORAGE_KEY = "uiTheme";
+
+function getPreferredTheme() {
+  return localStorage.getItem(THEME_STORAGE_KEY) || "light";
+}
+
+function applyTheme(theme) {
+  const isDark = theme === "dark";
+  document.body.classList.toggle("theme-dark", isDark);
+  const label = $("themeLabel");
+  const toggle = $("themeToggle");
+  if (label) label.textContent = `Theme: ${isDark ? "Dark" : "Light"}`;
+  if (toggle) toggle.textContent = `Switch to ${isDark ? "Light" : "Dark"} Theme`;
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+}
+
+function initThemeToggle() {
+  const toggle = $("themeToggle");
+  if (!toggle) return;
+  toggle.addEventListener("click", () => {
+    const nextTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
+    applyTheme(nextTheme);
+  });
+  applyTheme(getPreferredTheme());
+}
+
 function badge(status) {
   const s = (status || "").toLowerCase();
   if (s === "processed") return `<span class="badge green">processed</span>`;
@@ -1709,6 +1735,7 @@ initDropzone();
 initEventsUi();
 initPlannerUi();
 initAllContractsUi();
+initThemeToggle();
 showPage("contracts");
 
 testApi()
