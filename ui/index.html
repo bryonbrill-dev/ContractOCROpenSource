@@ -127,6 +127,15 @@
     .contracts-right { display: flex; flex-direction: column; gap: 16px; }
     .compact-table th, .compact-table td { padding: 6px; font-size: 12px; }
     .compact-table th { white-space: nowrap; }
+    .queue-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .queue-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .queue-controls input { min-width: 180px; }
+    .queue-scroll { max-height: 360px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+    .queue-scroll table { margin: 0; }
+    .queue-card { position: relative; }
+    .queue-expanded { position: fixed; inset: 20px; z-index: 1000; background: #f8fafc; overflow: auto; }
+    .queue-expanded .queue-scroll { max-height: calc(100vh - 260px); }
+    .queue-fullscreen { overflow: hidden; }
     .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .theme-toggle { display: inline-flex; align-items: center; gap: 8px; }
     .theme-toggle button { background: #ffffff; color: #0b3a6f; border-color: #0b3a6f; }
@@ -148,6 +157,8 @@
     body.theme-dark .contract-text { background: #0f172a; border-color: #1f2937; color: #e2e8f0; }
     body.theme-dark .preview-frame { background: #0f172a; border-color: #1f2937; }
     body.theme-dark.preview-fullscreen #contractContent { background: #0b1220; }
+    body.theme-dark .queue-scroll { background: #0f172a; border-color: #1f2937; }
+    body.theme-dark .queue-expanded { background: #0b1220; }
     body.theme-dark .event-date { color: #bfdbfe; }
     body.theme-dark #modalOverlay .bg-white { background: #0f172a; border-color: #1f2937; }
     body.theme-dark #modalOverlay .text-slate-900 { color: #e2e8f0; }
@@ -512,21 +523,38 @@
             <tbody id="pendingReminderTable"></tbody>
           </table>
         </div>
-        <div class="col card">
-          <h4 style="margin-top:0;">Pending Agreements Queue</h4>
-          <div class="muted small">Track approvals that need action and send quick nudges.</div>
-          <table class="compact-table" style="margin-top:10px;">
-            <thead>
-              <tr>
-                <th>Agreement</th>
-                <th>Owner</th>
-                <th>Due</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="pendingAgreementsTable"></tbody>
-          </table>
+        <div class="col card queue-card" id="pendingAgreementsQueueCard">
+          <div class="queue-header">
+            <div>
+              <h4 style="margin-top:0;">Pending Agreements Queue</h4>
+              <div class="muted small">Track approvals that need action and send quick nudges.</div>
+            </div>
+            <div class="queue-controls">
+              <input id="pendingAgreementsSearch" placeholder="Search queue" />
+              <button id="pendingAgreementsSearchButton" type="button">Search</button>
+              <button id="pendingAgreementsSearchClear" type="button">Clear</button>
+              <button id="pendingAgreementsQueueExpand" type="button" aria-pressed="false">Expand</button>
+            </div>
+          </div>
+          <div class="muted small" id="pendingAgreementsMeta" style="margin-top:6px;"></div>
+          <div class="queue-scroll" style="margin-top:10px;">
+            <table class="compact-table">
+              <thead>
+                <tr>
+                  <th>Agreement</th>
+                  <th>Owner</th>
+                  <th>Due</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="pendingAgreementsTable"></tbody>
+            </table>
+          </div>
+          <button id="pendingAgreementsLoadMore" class="hidden" type="button" style="margin-top:10px;">
+            Load more
+          </button>
           <div class="section" style="margin-top:12px;">
             <h4>Notification recipients</h4>
             <div class="muted small">Manage the user list used across reminders and task assignments.</div>
@@ -594,21 +622,38 @@
             <div class="muted small" id="taskStatus" style="margin-top:6px;"></div>
           </div>
         </div>
-        <div class="col card">
-          <h4 style="margin-top:0;">Task Queue</h4>
-          <div class="muted small">Manual nudges send immediate email reminders with direct links.</div>
-          <table class="compact-table" style="margin-top:10px;">
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th>Assignees</th>
-                <th>Due</th>
-                <th>Reminders</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="taskTable"></tbody>
-          </table>
+        <div class="col card queue-card" id="taskQueueCard">
+          <div class="queue-header">
+            <div>
+              <h4 style="margin-top:0;">Task Queue</h4>
+              <div class="muted small">Manual nudges send immediate email reminders with direct links.</div>
+            </div>
+            <div class="queue-controls">
+              <input id="taskQueueSearch" placeholder="Search tasks" />
+              <button id="taskQueueSearchButton" type="button">Search</button>
+              <button id="taskQueueSearchClear" type="button">Clear</button>
+              <button id="taskQueueExpand" type="button" aria-pressed="false">Expand</button>
+            </div>
+          </div>
+          <div class="muted small" id="taskQueueMeta" style="margin-top:6px;"></div>
+          <div class="queue-scroll" style="margin-top:10px;">
+            <table class="compact-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Assignees</th>
+                  <th>Due</th>
+                  <th>Reminders</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="taskTable"></tbody>
+            </table>
+          </div>
+          <button id="taskQueueLoadMore" class="hidden" type="button" style="margin-top:10px;">
+            Load more
+          </button>
           <div class="section" style="margin-top:12px;">
             <h4>User directory</h4>
             <div class="muted small">Define the shared list of users available for reminder configuration.</div>
