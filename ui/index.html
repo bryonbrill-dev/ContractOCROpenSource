@@ -81,6 +81,7 @@
     .link-button { background: none; border: none; color: #1d4ed8; cursor: pointer; font-weight: 600; padding: 0; }
     .link-button:hover { text-decoration: underline; }
     .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 999px; border: 1px solid #94a3b8; color: #475569; font-size: 11px; line-height: 1; cursor: help; }
+    .label-with-info { display: inline-flex; align-items: center; gap: 6px; }
     .preview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
     .preview-pane { height: 630px; min-height: 630px; resize: vertical; overflow: auto; }
     .preview-frame { width: 100%; height: 100%; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
@@ -247,7 +248,10 @@
 
           <div class="row wrap filters" style="margin-top:12px; gap:12px;">
             <label style="min-width:220px;">
-              Show Month
+              <span class="label-with-info">
+                <span class="info-icon" title="Select a month to focus the event list. Use the arrows to move month by month.">i</span>
+                <span>Show Month</span>
+              </span>
               <div class="month-nav">
                 <button type="button" id="eventPrevMonth">◀</button>
                 <input id="eventMonth" type="month" />
@@ -259,8 +263,10 @@
               Show all months
             </label>
             <label style="min-width:160px;">
-              Event Type
-              <span class="info-icon" title="Event types come from extracted terms and manual entries. Renewal/termination dates appear when the contract has a term length or specific date captured. Auto-renewing contracts without a term length may not show future renewals.">i</span>
+              <span class="label-with-info">
+                <span class="info-icon" title="Event types come from extracted terms and manual entries. Renewal/termination dates appear when the contract has a term length or specific date captured. Auto-renewing contracts without a term length may not show future renewals.">i</span>
+                <span>Event Type</span>
+              </span>
               <select id="eventTypeFilter">
                 <option value="all">All types</option>
                 <option value="renewal">Renewal</option>
@@ -270,7 +276,10 @@
           </select>
         </label>
         <label style="min-width:160px;">
-          Sort
+          <span class="label-with-info">
+            <span class="info-icon" title="Sort events by date or contract title.">i</span>
+            <span>Sort</span>
+          </span>
           <select id="eventSort">
             <option value="date_asc">Date ↑</option>
             <option value="date_desc">Date ↓</option>
@@ -279,13 +288,18 @@
           </select>
         </label>
         <label style="flex:1; min-width:200px;">
-          Search contracts or event types
+          <span class="label-with-info">
+            <span class="info-icon" title="Search by contract title, vendor, or event type.">i</span>
+            <span>Search contracts or event types</span>
+          </span>
           <input id="eventSearch" type="text" placeholder="Search by contract, vendor, or event…" />
         </label>
         <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
           <input type="checkbox" id="expiringOnly" />
-          Expiring-only
-          <span class="info-icon" title="Filters to renewal, termination, and auto opt-out deadlines so evergreen contracts stay out of the list unless they have a defined notice or end date.">i</span>
+          <span class="label-with-info">
+            <span class="info-icon" title="Filters to renewal, termination, and auto opt-out deadlines so evergreen contracts stay out of the list unless they have a defined notice or end date.">i</span>
+            <span>Expiring-only</span>
+          </span>
         </label>
       </div>
 
@@ -356,7 +370,10 @@
 
       <div class="row wrap filters" style="margin-top:12px; gap:12px;">
         <label style="min-width:220px;">
-          Show Month
+          <span class="label-with-info">
+            <span class="info-icon" title="Choose a month to populate the planner grid.">i</span>
+            <span>Show Month</span>
+          </span>
           <div class="month-nav">
             <button type="button" id="plannerPrevMonth">◀</button>
             <input type="month" id="plannerMonth" />
@@ -371,11 +388,17 @@
 
       <div class="row wrap filters" style="margin-top:8px; gap:12px;">
         <label style="min-width:200px;">
-          Contract
+          <span class="label-with-info">
+            <span class="info-icon" title="Pick the contract to attach the new event to.">i</span>
+            <span>Contract</span>
+          </span>
           <select id="plannerContract"></select>
         </label>
         <label style="min-width:140px;">
-          Event Type
+          <span class="label-with-info">
+            <span class="info-icon" title="Select the event type for the new planner entry.">i</span>
+            <span>Event Type</span>
+          </span>
           <select id="plannerEventType">
             <option value="renewal">Renewal</option>
             <option value="termination">Termination</option>
@@ -385,11 +408,17 @@
           </select>
         </label>
         <label style="min-width:160px;">
-          Event Date
+          <span class="label-with-info">
+            <span class="info-icon" title="Select the date you want this event to appear on.">i</span>
+            <span>Event Date</span>
+          </span>
           <input type="date" id="plannerEventDate" />
         </label>
         <label style="flex:1; min-width:200px;">
-          Custom Type (if chosen)
+          <span class="label-with-info">
+            <span class="info-icon" title="Provide a custom label when Event Type is set to Custom.">i</span>
+            <span>Custom Type (if chosen)</span>
+          </span>
           <input type="text" id="plannerCustomType" placeholder="e.g., Notice" />
         </label>
         <button id="plannerAdd">Add Event</button>
