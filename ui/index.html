@@ -178,6 +178,8 @@
     <button id="navAllContracts">All Contracts</button>
     <button id="navEvents">Events</button>
     <button id="navPlanner">Planner</button>
+    <button id="navPendingAgreements">Pending Agreements</button>
+    <button id="navTasks">Tasks</button>
     <button id="navOutputs">Support Page</button>
   </div>
 
@@ -441,6 +443,185 @@
         </thead>
         <tbody id="plannerTable"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div id="pendingAgreementsPage" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">Pending Agreements</h3>
+          <div class="muted small">Configure reminder schedules and nudge approvers for pending agreements.</div>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:12px;">
+        <h4>Admin setup overview</h4>
+        <ul class="small" style="margin:6px 0 0 18px; color:#374151;">
+          <li>Set reminder cadence (daily, weekly, monthly) and choose roles or individuals for approvals.</li>
+          <li>Configure event-driven notifications for renewals, opt-outs, and effective dates.</li>
+          <li>Send one-time nudges for urgent approvals or reviews.</li>
+          <li>Create recurring alerts relative to due dates (7 days before, 1 day before, due date, and after).</li>
+        </ul>
+      </div>
+
+      <div class="row wrap" style="margin-top:12px;">
+        <div class="col card">
+          <h4 style="margin-top:0;">Pending Agreement Reminders</h4>
+          <div class="muted small">Save reminder rules for pending approvals and select recipients.</div>
+          <div class="section" style="margin-top:10px;">
+            <label class="small" style="display:block; margin-bottom:8px;">
+              <span>Frequency</span>
+              <select id="pendingReminderFrequency" class="muted-input">
+                <option value="daily">Daily</option>
+                <option value="weekly" selected>Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            <div class="small" style="margin-bottom:8px;">
+              <div class="label-with-info">
+                <span>Recipient roles</span>
+                <span class="info-icon" title="Assign reminders to specific roles in addition to individuals.">i</span>
+              </div>
+              <div id="pendingRoleOptions" class="row wrap" style="margin-top:6px;"></div>
+            </div>
+            <div class="small" style="margin-bottom:8px;">
+              <div class="label-with-info">
+                <span>Individual recipients</span>
+                <span class="info-icon" title="Select named users to receive approval reminders.">i</span>
+              </div>
+              <div id="pendingRecipientOptions" class="row wrap" style="margin-top:6px;"></div>
+            </div>
+            <label class="small" style="display:block; margin-bottom:8px;">
+              <span>Reminder message</span>
+              <input id="pendingReminderMessage" class="muted-input" placeholder="Approve pending agreements for this week." />
+            </label>
+            <button id="pendingReminderSave">Save Reminder Rule</button>
+            <div class="muted small" id="pendingReminderStatus" style="margin-top:6px;"></div>
+          </div>
+          <table class="compact-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Frequency</th>
+                <th>Roles</th>
+                <th>Recipients</th>
+                <th>Message</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="pendingReminderTable"></tbody>
+          </table>
+        </div>
+        <div class="col card">
+          <h4 style="margin-top:0;">Pending Agreements Queue</h4>
+          <div class="muted small">Track approvals that need action and send quick nudges.</div>
+          <table class="compact-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Agreement</th>
+                <th>Owner</th>
+                <th>Due</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="pendingAgreementsTable"></tbody>
+          </table>
+          <div class="section" style="margin-top:12px;">
+            <h4>Notification recipients</h4>
+            <div class="muted small">Manage the user list used across reminders and task assignments.</div>
+            <div id="pendingUserDirectory" class="folder-list"></div>
+            <div class="inline" style="margin-top:8px;">
+              <input id="pendingUserName" placeholder="Name" />
+              <input id="pendingUserEmail" placeholder="Email" />
+              <button id="pendingUserAdd" type="button">Add user</button>
+            </div>
+            <div class="muted small" id="pendingUserStatus" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tasksPage" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">Tasks</h3>
+          <div class="muted small">Create task assignments, configure reminders, and send nudges.</div>
+        </div>
+      </div>
+
+      <div class="row wrap" style="margin-top:12px;">
+        <div class="col card">
+          <h4 style="margin-top:0;">Create Task</h4>
+          <div class="section" style="margin-top:10px;">
+            <label class="small" style="display:block; margin-bottom:8px;">
+              <span>Task title</span>
+              <input id="taskTitle" class="muted-input" placeholder="Review renewal clause for ACME" />
+            </label>
+            <label class="small" style="display:block; margin-bottom:8px;">
+              <span>Description</span>
+              <input id="taskDescription" class="muted-input" placeholder="Confirm renewal timeline and opt-out notice." />
+            </label>
+            <label class="small" style="display:block; margin-bottom:8px;">
+              <span>Due date</span>
+              <input type="date" id="taskDueDate" class="muted-input" />
+            </label>
+            <label class="small" style="display:block; margin-bottom:8px;">
+              <span>Recurrence</span>
+              <select id="taskRecurrence" class="muted-input">
+                <option value="none" selected>None</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            <div class="small" style="margin-bottom:8px;">
+              <div class="label-with-info">
+                <span>Reminder offsets</span>
+                <span class="info-icon" title="Offsets are relative to the due date.">i</span>
+              </div>
+              <div id="taskReminderOptions" class="row wrap" style="margin-top:6px;"></div>
+            </div>
+            <div class="small" style="margin-bottom:8px;">
+              <div class="label-with-info">
+                <span>Assignees</span>
+                <span class="info-icon" title="Choose one or more users to receive nudges.">i</span>
+              </div>
+              <div id="taskAssigneeOptions" class="row wrap" style="margin-top:6px;"></div>
+            </div>
+            <button id="taskCreate">Create Task</button>
+            <div class="muted small" id="taskStatus" style="margin-top:6px;"></div>
+          </div>
+        </div>
+        <div class="col card">
+          <h4 style="margin-top:0;">Task Queue</h4>
+          <div class="muted small">Manual nudges send immediate email reminders with direct links.</div>
+          <table class="compact-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Assignees</th>
+                <th>Due</th>
+                <th>Reminders</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="taskTable"></tbody>
+          </table>
+          <div class="section" style="margin-top:12px;">
+            <h4>User directory</h4>
+            <div class="muted small">Define the shared list of users available for reminder configuration.</div>
+            <div id="taskUserDirectory" class="folder-list"></div>
+            <div class="inline" style="margin-top:8px;">
+              <input id="taskUserName" placeholder="Name" />
+              <input id="taskUserEmail" placeholder="Email" />
+              <button id="taskUserAdd" type="button">Add user</button>
+            </div>
+            <div class="muted small" id="taskUserStatus" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -15,6 +15,66 @@ const state = {
   currentPage: "contracts",
   selectedContractId: null,
   previewFullscreen: false,
+  notificationUsers: [
+    { name: "Avery Carter", email: "avery.carter@contractsuite.com" },
+    { name: "Jordan Lee", email: "jordan.lee@contractsuite.com" },
+    { name: "Priya Patel", email: "priya.patel@contractsuite.com" },
+    { name: "Morgan Rivera", email: "morgan.rivera@contractsuite.com" },
+  ],
+  pendingAgreementReminders: [
+    {
+      id: "pending-reminder-1",
+      frequency: "weekly",
+      roles: ["Legal", "Procurement"],
+      recipients: ["avery.carter@contractsuite.com", "priya.patel@contractsuite.com"],
+      message: "Weekly approval reminder: review pending agreements before Friday.",
+    },
+  ],
+  pendingAgreements: [
+    {
+      id: "pa-001",
+      title: "Master Services Agreement - Harbor Health",
+      owner: "Avery Carter",
+      dueDate: "2024-11-22",
+      status: "Awaiting approval",
+    },
+    {
+      id: "pa-002",
+      title: "SaaS Renewal - Northwind Labs",
+      owner: "Jordan Lee",
+      dueDate: "2024-11-28",
+      status: "Legal review",
+    },
+    {
+      id: "pa-003",
+      title: "Statement of Work - BlueBridge",
+      owner: "Priya Patel",
+      dueDate: "2024-12-03",
+      status: "Pending signatures",
+    },
+  ],
+  tasks: [
+    {
+      id: "task-001",
+      title: "Review auto-renew clause for Harbor Health",
+      description: "Confirm opt-out notice window and renewal dates.",
+      dueDate: "2024-11-21",
+      recurrence: "none",
+      reminders: ["7 days before", "1 day before"],
+      assignees: ["jordan.lee@contractsuite.com"],
+      completed: false,
+    },
+    {
+      id: "task-002",
+      title: "Prepare renewal timeline briefing",
+      description: "Send summary of renewal events to ops.",
+      dueDate: "2024-12-01",
+      recurrence: "monthly",
+      reminders: ["7 days before", "Due date"],
+      assignees: ["morgan.rivera@contractsuite.com", "priya.patel@contractsuite.com"],
+      completed: false,
+    },
+  ],
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -1456,8 +1516,317 @@ async function exportAllContractsCsv() {
   downloadCsv(`contracts-${timestampForFilename()}.csv`, headers, rows);
 }
 
+const PENDING_ROLE_OPTIONS = ["Legal", "Procurement", "Finance", "Operations", "Sales"];
+const TASK_REMINDER_OPTIONS = ["7 days before", "1 day before", "Due date", "1 day after"];
+
+function formatUserLabel(user) {
+  return `${user.name} (${user.email})`;
+}
+
+function renderCheckboxList(containerId, items, selectedValues = []) {
+  const container = $(containerId);
+  if (!container) return;
+  if (!items.length) {
+    container.innerHTML = `<div class="muted small">No options available.</div>`;
+    return;
+  }
+  container.innerHTML = items
+    .map((item, index) => {
+      const value = typeof item === "string" ? item : item.email;
+      const label = typeof item === "string" ? item : formatUserLabel(item);
+      const isChecked = selectedValues.includes(value);
+      return `
+        <label class="inline small" style="gap:6px;">
+          <input type="checkbox" value="${escapeHtml(value)}" ${isChecked ? "checked" : ""} />
+          <span>${escapeHtml(label)}</span>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+function getCheckedValues(containerId) {
+  const container = $(containerId);
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+}
+
+function renderUserDirectories() {
+  const targets = ["pendingUserDirectory", "taskUserDirectory"];
+  targets.forEach((targetId) => {
+    const container = $(targetId);
+    if (!container) return;
+    if (!state.notificationUsers.length) {
+      container.innerHTML = `<div class="muted small">No users added yet.</div>`;
+      return;
+    }
+    container.innerHTML = state.notificationUsers
+      .map(
+        (user) => `
+        <div class="folder-card">
+          <div class="folder-header">
+            <div class="folder-title">${escapeHtml(user.name)}</div>
+            <button class="link-button" data-remove-user="${escapeHtml(user.email)}">Remove</button>
+          </div>
+          <div class="folder-body small">${escapeHtml(user.email)}</div>
+        </div>
+      `,
+      )
+      .join("");
+  });
+
+  targets.forEach((targetId) => {
+    const container = $(targetId);
+    if (!container) return;
+    container.querySelectorAll("button[data-remove-user]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const email = btn.dataset.removeUser;
+        state.notificationUsers = state.notificationUsers.filter((user) => user.email !== email);
+        renderUserDirectories();
+        renderNotificationOptions();
+      });
+    });
+  });
+}
+
+function renderNotificationOptions() {
+  renderCheckboxList("pendingRoleOptions", PENDING_ROLE_OPTIONS);
+  renderCheckboxList("pendingRecipientOptions", state.notificationUsers);
+  renderCheckboxList("taskAssigneeOptions", state.notificationUsers);
+  renderCheckboxList("taskReminderOptions", TASK_REMINDER_OPTIONS);
+}
+
+function renderPendingReminderTable() {
+  const table = $("pendingReminderTable");
+  if (!table) return;
+  if (!state.pendingAgreementReminders.length) {
+    table.innerHTML = `<tr><td colspan="5" class="muted">No reminder rules saved yet.</td></tr>`;
+    return;
+  }
+
+  const userLookup = new Map(state.notificationUsers.map((user) => [user.email, user.name]));
+  table.innerHTML = state.pendingAgreementReminders
+    .map((reminder) => {
+      const recipients = reminder.recipients
+        .map((email) => userLookup.get(email) || email)
+        .join(", ");
+      return `
+        <tr>
+          <td>${escapeHtml(titleCase(reminder.frequency))}</td>
+          <td>${escapeHtml(reminder.roles.join(", ") || "None")}</td>
+          <td>${escapeHtml(recipients || "None")}</td>
+          <td>${escapeHtml(reminder.message || "")}</td>
+          <td><button data-remove-reminder="${reminder.id}">Remove</button></td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  table.querySelectorAll("button[data-remove-reminder]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.pendingAgreementReminders = state.pendingAgreementReminders.filter(
+        (reminder) => reminder.id !== btn.dataset.removeReminder,
+      );
+      renderPendingReminderTable();
+    });
+  });
+}
+
+function renderPendingAgreementsQueue() {
+  const table = $("pendingAgreementsTable");
+  if (!table) return;
+  if (!state.pendingAgreements.length) {
+    table.innerHTML = `<tr><td colspan="5" class="muted">No pending agreements right now.</td></tr>`;
+    return;
+  }
+  table.innerHTML = state.pendingAgreements
+    .map(
+      (agreement) => `
+        <tr>
+          <td>${escapeHtml(agreement.title)}</td>
+          <td>${escapeHtml(agreement.owner)}</td>
+          <td>${escapeHtml(agreement.dueDate)}</td>
+          <td>${escapeHtml(agreement.status)}</td>
+          <td><button data-nudge-agreement="${agreement.id}">Nudge</button></td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  table.querySelectorAll("button[data-nudge-agreement]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const agreement = state.pendingAgreements.find((item) => item.id === btn.dataset.nudgeAgreement);
+      if (!agreement) return;
+      await showAlert(
+        `A nudge email would be sent for "${agreement.title}" to ${agreement.owner}.`,
+        { title: "Nudge queued" },
+      );
+    });
+  });
+}
+
+function renderTaskTable() {
+  const table = $("taskTable");
+  if (!table) return;
+  if (!state.tasks.length) {
+    table.innerHTML = `<tr><td colspan="5" class="muted">No tasks have been created yet.</td></tr>`;
+    return;
+  }
+  const userLookup = new Map(state.notificationUsers.map((user) => [user.email, user.name]));
+  table.innerHTML = state.tasks
+    .map((task) => {
+      const assignees = task.assignees
+        .map((email) => userLookup.get(email) || email)
+        .join(", ");
+      const reminders = task.reminders.join(", ");
+      const statusLabel = task.completed ? "Completed" : "Open";
+      return `
+        <tr>
+          <td>
+            <div>${escapeHtml(task.title)}</div>
+            <div class="muted small">${escapeHtml(task.description || "")}</div>
+            <div class="muted small">Status: ${statusLabel}</div>
+          </td>
+          <td>${escapeHtml(assignees || "Unassigned")}</td>
+          <td>${escapeHtml(task.dueDate || "")}</td>
+          <td>${escapeHtml(reminders || "None")}</td>
+          <td>
+            <button data-task-nudge="${task.id}">Nudge</button>
+            <button data-task-toggle="${task.id}">${task.completed ? "Reopen" : "Complete"}</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  table.querySelectorAll("button[data-task-nudge]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const task = state.tasks.find((item) => item.id === btn.dataset.taskNudge);
+      if (!task) return;
+      await showAlert(`A one-time nudge would be sent for "${task.title}".`, { title: "Nudge queued" });
+    });
+  });
+
+  table.querySelectorAll("button[data-task-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const task = state.tasks.find((item) => item.id === btn.dataset.taskToggle);
+      if (!task) return;
+      task.completed = !task.completed;
+      renderTaskTable();
+    });
+  });
+}
+
+function initPendingAgreementsUi() {
+  renderNotificationOptions();
+  renderPendingReminderTable();
+  renderPendingAgreementsQueue();
+  renderUserDirectories();
+
+  $("pendingReminderSave")?.addEventListener("click", async () => {
+    const frequency = $("pendingReminderFrequency")?.value || "weekly";
+    const roles = getCheckedValues("pendingRoleOptions");
+    const recipients = getCheckedValues("pendingRecipientOptions");
+    const message = $("pendingReminderMessage")?.value?.trim();
+
+    if (!roles.length && !recipients.length) {
+      await showAlert("Select at least one role or individual recipient.", { title: "Missing recipients" });
+      return;
+    }
+
+    state.pendingAgreementReminders.unshift({
+      id: `pending-reminder-${Date.now()}`,
+      frequency,
+      roles,
+      recipients,
+      message,
+    });
+    if ($("pendingReminderMessage")) $("pendingReminderMessage").value = "";
+    renderPendingReminderTable();
+    const status = $("pendingReminderStatus");
+    if (status) status.textContent = "Reminder rule saved.";
+  });
+
+  $("pendingUserAdd")?.addEventListener("click", async () => {
+    const name = $("pendingUserName")?.value?.trim();
+    const email = $("pendingUserEmail")?.value?.trim();
+    if (!name || !email) {
+      await showAlert("Provide both name and email.", { title: "Missing info" });
+      return;
+    }
+    if (state.notificationUsers.some((user) => user.email.toLowerCase() === email.toLowerCase())) {
+      await showAlert("That email is already in the list.", { title: "Duplicate user" });
+      return;
+    }
+    state.notificationUsers.push({ name, email });
+    if ($("pendingUserName")) $("pendingUserName").value = "";
+    if ($("pendingUserEmail")) $("pendingUserEmail").value = "";
+    renderUserDirectories();
+    renderNotificationOptions();
+    const status = $("pendingUserStatus");
+    if (status) status.textContent = "User added.";
+  });
+}
+
+function initTasksUi() {
+  renderNotificationOptions();
+  renderTaskTable();
+  renderUserDirectories();
+
+  $("taskCreate")?.addEventListener("click", async () => {
+    const title = $("taskTitle")?.value?.trim();
+    const description = $("taskDescription")?.value?.trim();
+    const dueDate = $("taskDueDate")?.value;
+    const recurrence = $("taskRecurrence")?.value || "none";
+    const reminders = getCheckedValues("taskReminderOptions");
+    const assignees = getCheckedValues("taskAssigneeOptions");
+
+    if (!title || !dueDate) {
+      await showAlert("Task title and due date are required.", { title: "Missing info" });
+      return;
+    }
+
+    state.tasks.unshift({
+      id: `task-${Date.now()}`,
+      title,
+      description,
+      dueDate,
+      recurrence,
+      reminders,
+      assignees,
+      completed: false,
+    });
+    if ($("taskTitle")) $("taskTitle").value = "";
+    if ($("taskDescription")) $("taskDescription").value = "";
+    if ($("taskDueDate")) $("taskDueDate").value = "";
+    renderTaskTable();
+    const status = $("taskStatus");
+    if (status) status.textContent = "Task created.";
+  });
+
+  $("taskUserAdd")?.addEventListener("click", async () => {
+    const name = $("taskUserName")?.value?.trim();
+    const email = $("taskUserEmail")?.value?.trim();
+    if (!name || !email) {
+      await showAlert("Provide both name and email.", { title: "Missing info" });
+      return;
+    }
+    if (state.notificationUsers.some((user) => user.email.toLowerCase() === email.toLowerCase())) {
+      await showAlert("That email is already in the list.", { title: "Duplicate user" });
+      return;
+    }
+    state.notificationUsers.push({ name, email });
+    if ($("taskUserName")) $("taskUserName").value = "";
+    if ($("taskUserEmail")) $("taskUserEmail").value = "";
+    renderUserDirectories();
+    renderNotificationOptions();
+    const status = $("taskUserStatus");
+    if (status) status.textContent = "User added.";
+  });
+}
+
 function showPage(page) {
-  const pages = ["contracts", "allContracts", "events", "planner", "outputs"];
+  const pages = ["contracts", "allContracts", "events", "planner", "pendingAgreements", "tasks", "outputs"];
   state.currentPage = page;
   pages.forEach((p) => {
     $(p + "Page")?.classList.toggle("hidden", p !== page);
@@ -1748,6 +2117,8 @@ $("navContracts")?.addEventListener("click", () => showPage("contracts"));
 $("navAllContracts")?.addEventListener("click", () => showPage("allContracts"));
 $("navEvents")?.addEventListener("click", () => showPage("events"));
 $("navPlanner")?.addEventListener("click", () => showPage("planner"));
+$("navPendingAgreements")?.addEventListener("click", () => showPage("pendingAgreements"));
+$("navTasks")?.addEventListener("click", () => showPage("tasks"));
 $("navOutputs")?.addEventListener("click", () => showPage("outputs"));
 
 $("saveApi").addEventListener("click", async () => {
@@ -1765,6 +2136,8 @@ initModal();
 initDropzone();
 initEventsUi();
 initPlannerUi();
+initPendingAgreementsUi();
+initTasksUi();
 initAllContractsUi();
 initThemeToggle();
 initPreviewFullscreen();
