@@ -25,51 +25,20 @@ const state = {
       message: "Weekly approval reminder: review pending agreements before Friday.",
     },
   ],
-  pendingAgreements: [
-    {
-      id: "pa-001",
-      title: "Master Services Agreement - Harbor Health",
-      owner: "Avery Carter",
-      dueDate: "2024-11-22",
-      status: "Awaiting approval",
-    },
-    {
-      id: "pa-002",
-      title: "SaaS Renewal - Northwind Labs",
-      owner: "Jordan Lee",
-      dueDate: "2024-11-28",
-      status: "Legal review",
-    },
-    {
-      id: "pa-003",
-      title: "Statement of Work - BlueBridge",
-      owner: "Priya Patel",
-      dueDate: "2024-12-03",
-      status: "Pending signatures",
-    },
-  ],
-  tasks: [
-    {
-      id: "task-001",
-      title: "Review auto-renew clause for Harbor Health",
-      description: "Confirm opt-out notice window and renewal dates.",
-      dueDate: "2024-11-21",
-      recurrence: "none",
-      reminders: ["7 days before", "1 day before"],
-      assignees: ["jordan.lee@contractsuite.com"],
-      completed: false,
-    },
-    {
-      id: "task-002",
-      title: "Prepare renewal timeline briefing",
-      description: "Send summary of renewal events to ops.",
-      dueDate: "2024-12-01",
-      recurrence: "monthly",
-      reminders: ["7 days before", "Due date"],
-      assignees: ["morgan.rivera@contractsuite.com", "priya.patel@contractsuite.com"],
-      completed: false,
-    },
-  ],
+  pendingAgreements: [],
+  pendingAgreementsQuery: "",
+  pendingAgreementsOffset: 0,
+  pendingAgreementsLimit: 20,
+  pendingAgreementsTotal: 0,
+  pendingAgreementsHasMore: false,
+  pendingAgreementsExpanded: false,
+  tasks: [],
+  tasksQuery: "",
+  tasksOffset: 0,
+  tasksLimit: 20,
+  tasksTotal: 0,
+  tasksHasMore: false,
+  tasksExpanded: false,
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -208,10 +177,50 @@ function setPreviewFullscreen(isActive) {
   }
 }
 
+function setQueueExpanded(queueKey, isExpanded) {
+  const isPending = queueKey === "pendingAgreements";
+  const card = $(isPending ? "pendingAgreementsQueueCard" : "taskQueueCard");
+  const toggle = $(isPending ? "pendingAgreementsQueueExpand" : "taskQueueExpand");
+  if (!card) return;
+  card.classList.toggle("queue-expanded", isExpanded);
+  document.body.classList.toggle("queue-fullscreen", isExpanded);
+  if (toggle) {
+    toggle.textContent = isExpanded ? "Exit full screen" : "Expand";
+    toggle.setAttribute("aria-pressed", String(isExpanded));
+  }
+  if (isPending) {
+    state.pendingAgreementsExpanded = isExpanded;
+  } else {
+    state.tasksExpanded = isExpanded;
+  }
+}
+
+function toggleQueueExpanded(queueKey) {
+  const isPending = queueKey === "pendingAgreements";
+  const current = isPending ? state.pendingAgreementsExpanded : state.tasksExpanded;
+  if (!current) {
+    if (isPending && state.tasksExpanded) {
+      setQueueExpanded("tasks", false);
+    }
+    if (!isPending && state.pendingAgreementsExpanded) {
+      setQueueExpanded("pendingAgreements", false);
+    }
+  }
+  setQueueExpanded(queueKey, !current);
+}
+
 function initPreviewFullscreen() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.previewFullscreen) {
       setPreviewFullscreen(false);
+    }
+    if (event.key === "Escape") {
+      if (state.pendingAgreementsExpanded) {
+        setQueueExpanded("pendingAgreements", false);
+      }
+      if (state.tasksExpanded) {
+        setQueueExpanded("tasks", false);
+      }
     }
   });
 }
@@ -277,6 +286,42 @@ async function createNotificationUser(payload) {
 
 async function deleteNotificationUser(userId) {
   await apiFetch(`/api/notification-users/${userId}`, { method: "DELETE" });
+}
+
+async function fetchPendingAgreements({ limit = 20, offset = 0, query = "" } = {}) {
+  const params = new URLSearchParams();
+  params.set("limit", limit);
+  params.set("offset", offset);
+  if (query) params.set("query", query);
+  const res = await apiFetch(`/api/pending-agreements?${params.toString()}`);
+  return res.json();
+}
+
+async function fetchTasks({ limit = 20, offset = 0, query = "" } = {}) {
+  const params = new URLSearchParams();
+  params.set("limit", limit);
+  params.set("offset", offset);
+  if (query) params.set("query", query);
+  const res = await apiFetch(`/api/tasks?${params.toString()}`);
+  return res.json();
+}
+
+async function createTask(payload) {
+  const res = await apiFetch("/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function updateTaskStatus(taskId, completed) {
+  const res = await apiFetch(`/api/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ completed }),
+  });
+  return res.json();
 }
 
 function formatDate(dateStr) {
@@ -1622,6 +1667,106 @@ function renderNotificationOptions() {
   renderCheckboxList("taskReminderOptions", TASK_REMINDER_OPTIONS);
 }
 
+function updatePendingAgreementsMeta() {
+  const meta = $("pendingAgreementsMeta");
+  const loadMore = $("pendingAgreementsLoadMore");
+  if (meta) {
+    if (state.pendingAgreementsTotal) {
+      meta.textContent = `Showing ${state.pendingAgreements.length} of ${state.pendingAgreementsTotal}`;
+    } else if (state.pendingAgreementsQuery) {
+      meta.textContent = "No pending agreements match this search.";
+    } else {
+      meta.textContent = "No pending agreements yet.";
+    }
+  }
+  if (loadMore) {
+    loadMore.classList.toggle("hidden", !state.pendingAgreementsHasMore);
+    loadMore.disabled = !state.pendingAgreementsHasMore;
+  }
+}
+
+async function loadPendingAgreements({ reset = false } = {}) {
+  const table = $("pendingAgreementsTable");
+  if (reset && table) {
+    table.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
+  }
+  try {
+    const offset = reset ? 0 : state.pendingAgreementsOffset;
+    const data = await fetchPendingAgreements({
+      limit: state.pendingAgreementsLimit,
+      offset,
+      query: state.pendingAgreementsQuery,
+    });
+    const items = data.items || [];
+    state.pendingAgreementsTotal = data.total || 0;
+    if (reset) {
+      state.pendingAgreements = items;
+    } else {
+      state.pendingAgreements = [...state.pendingAgreements, ...items];
+    }
+    state.pendingAgreementsOffset = state.pendingAgreements.length;
+    state.pendingAgreementsHasMore = state.pendingAgreementsOffset < state.pendingAgreementsTotal;
+    renderPendingAgreementsQueue();
+  } catch (err) {
+    if (table) {
+      table.innerHTML = `<tr><td colspan="6" class="muted">Unable to load pending agreements. ${err.message}</td></tr>`;
+    }
+    state.pendingAgreementsHasMore = false;
+  } finally {
+    updatePendingAgreementsMeta();
+  }
+}
+
+function updateTasksMeta() {
+  const meta = $("taskQueueMeta");
+  const loadMore = $("taskQueueLoadMore");
+  if (meta) {
+    if (state.tasksTotal) {
+      meta.textContent = `Showing ${state.tasks.length} of ${state.tasksTotal}`;
+    } else if (state.tasksQuery) {
+      meta.textContent = "No tasks match this search.";
+    } else {
+      meta.textContent = "No tasks yet.";
+    }
+  }
+  if (loadMore) {
+    loadMore.classList.toggle("hidden", !state.tasksHasMore);
+    loadMore.disabled = !state.tasksHasMore;
+  }
+}
+
+async function loadTasks({ reset = false } = {}) {
+  const table = $("taskTable");
+  if (reset && table) {
+    table.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
+  }
+  try {
+    const offset = reset ? 0 : state.tasksOffset;
+    const data = await fetchTasks({
+      limit: state.tasksLimit,
+      offset,
+      query: state.tasksQuery,
+    });
+    const items = data.items || [];
+    state.tasksTotal = data.total || 0;
+    if (reset) {
+      state.tasks = items;
+    } else {
+      state.tasks = [...state.tasks, ...items];
+    }
+    state.tasksOffset = state.tasks.length;
+    state.tasksHasMore = state.tasksOffset < state.tasksTotal;
+    renderTaskTable();
+  } catch (err) {
+    if (table) {
+      table.innerHTML = `<tr><td colspan="6" class="muted">Unable to load tasks. ${err.message}</td></tr>`;
+    }
+    state.tasksHasMore = false;
+  } finally {
+    updateTasksMeta();
+  }
+}
+
 function renderPendingReminderTable() {
   const table = $("pendingReminderTable");
   if (!table) return;
@@ -1662,7 +1807,7 @@ function renderPendingAgreementsQueue() {
   const table = $("pendingAgreementsTable");
   if (!table) return;
   if (!state.pendingAgreements.length) {
-    table.innerHTML = `<tr><td colspan="5" class="muted">No pending agreements right now.</td></tr>`;
+    table.innerHTML = `<tr><td colspan="6" class="muted">No pending agreements right now.</td></tr>`;
     return;
   }
   table.innerHTML = state.pendingAgreements
@@ -1671,8 +1816,9 @@ function renderPendingAgreementsQueue() {
         <tr>
           <td>${escapeHtml(agreement.title)}</td>
           <td>${escapeHtml(agreement.owner)}</td>
-          <td>${escapeHtml(agreement.dueDate)}</td>
-          <td>${escapeHtml(agreement.status)}</td>
+          <td>${escapeHtml(formatDate(agreement.due_date || agreement.dueDate))}</td>
+          <td>${escapeHtml(agreement.status || "")}</td>
+          <td>${escapeHtml(formatDate(agreement.created_at))}</td>
           <td><button data-nudge-agreement="${agreement.id}">Nudge</button></td>
         </tr>
       `,
@@ -1695,7 +1841,7 @@ function renderTaskTable() {
   const table = $("taskTable");
   if (!table) return;
   if (!state.tasks.length) {
-    table.innerHTML = `<tr><td colspan="5" class="muted">No tasks have been created yet.</td></tr>`;
+    table.innerHTML = `<tr><td colspan="6" class="muted">No tasks have been created yet.</td></tr>`;
     return;
   }
   const userLookup = new Map(state.notificationUsers.map((user) => [user.email, user.name]));
@@ -1714,8 +1860,9 @@ function renderTaskTable() {
             <div class="muted small">Status: ${statusLabel}</div>
           </td>
           <td>${escapeHtml(assignees || "Unassigned")}</td>
-          <td>${escapeHtml(task.dueDate || "")}</td>
+          <td>${escapeHtml(formatDate(task.due_date || task.dueDate))}</td>
           <td>${escapeHtml(reminders || "None")}</td>
+          <td>${escapeHtml(formatDate(task.created_at))}</td>
           <td>
             <button data-task-nudge="${task.id}">Nudge</button>
             <button data-task-toggle="${task.id}">${task.completed ? "Reopen" : "Complete"}</button>
@@ -1734,11 +1881,17 @@ function renderTaskTable() {
   });
 
   table.querySelectorAll("button[data-task-toggle]").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const task = state.tasks.find((item) => item.id === btn.dataset.taskToggle);
       if (!task) return;
-      task.completed = !task.completed;
-      renderTaskTable();
+      const nextStatus = !task.completed;
+      try {
+        await updateTaskStatus(task.id, nextStatus);
+        task.completed = nextStatus;
+        renderTaskTable();
+      } catch (err) {
+        await showAlert(`Unable to update task status. ${err.message}`, { title: "Update failed" });
+      }
     });
   });
 }
@@ -1748,6 +1901,30 @@ function initPendingAgreementsUi() {
   renderPendingReminderTable();
   renderPendingAgreementsQueue();
   renderUserDirectories();
+
+  $("pendingAgreementsQueueExpand")?.addEventListener("click", () => toggleQueueExpanded("pendingAgreements"));
+  $("pendingAgreementsLoadMore")?.addEventListener("click", async () => {
+    await loadPendingAgreements();
+  });
+  const pendingSearch = $("pendingAgreementsSearch");
+  const pendingSearchButton = $("pendingAgreementsSearchButton");
+  const pendingSearchClear = $("pendingAgreementsSearchClear");
+  const runPendingSearch = async () => {
+    state.pendingAgreementsQuery = pendingSearch?.value.trim() || "";
+    await loadPendingAgreements({ reset: true });
+  };
+  pendingSearchButton?.addEventListener("click", runPendingSearch);
+  pendingSearchClear?.addEventListener("click", async () => {
+    if (pendingSearch) pendingSearch.value = "";
+    state.pendingAgreementsQuery = "";
+    await loadPendingAgreements({ reset: true });
+  });
+  pendingSearch?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runPendingSearch();
+    }
+  });
 
   $("pendingReminderSave")?.addEventListener("click", async () => {
     const frequency = $("pendingReminderFrequency")?.value || "weekly";
@@ -1797,12 +1974,38 @@ function initPendingAgreementsUi() {
       await showAlert(`Unable to add user. ${err.message}`, { title: "Save failed" });
     }
   });
+
+  loadPendingAgreements({ reset: true });
 }
 
 function initTasksUi() {
   renderNotificationOptions();
   renderTaskTable();
   renderUserDirectories();
+
+  $("taskQueueExpand")?.addEventListener("click", () => toggleQueueExpanded("tasks"));
+  $("taskQueueLoadMore")?.addEventListener("click", async () => {
+    await loadTasks();
+  });
+  const taskSearch = $("taskQueueSearch");
+  const taskSearchButton = $("taskQueueSearchButton");
+  const taskSearchClear = $("taskQueueSearchClear");
+  const runTaskSearch = async () => {
+    state.tasksQuery = taskSearch?.value.trim() || "";
+    await loadTasks({ reset: true });
+  };
+  taskSearchButton?.addEventListener("click", runTaskSearch);
+  taskSearchClear?.addEventListener("click", async () => {
+    if (taskSearch) taskSearch.value = "";
+    state.tasksQuery = "";
+    await loadTasks({ reset: true });
+  });
+  taskSearch?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runTaskSearch();
+    }
+  });
 
   $("taskCreate")?.addEventListener("click", async () => {
     const title = $("taskTitle")?.value?.trim();
@@ -1817,20 +2020,23 @@ function initTasksUi() {
       return;
     }
 
-    state.tasks.unshift({
-      id: `task-${Date.now()}`,
-      title,
-      description,
-      dueDate,
-      recurrence,
-      reminders,
-      assignees,
-      completed: false,
-    });
+    try {
+      await createTask({
+        title,
+        description,
+        due_date: dueDate,
+        recurrence,
+        reminders,
+        assignees,
+      });
+      await loadTasks({ reset: true });
+    } catch (err) {
+      await showAlert(`Unable to create task. ${err.message}`, { title: "Save failed" });
+      return;
+    }
     if ($("taskTitle")) $("taskTitle").value = "";
     if ($("taskDescription")) $("taskDescription").value = "";
     if ($("taskDueDate")) $("taskDueDate").value = "";
-    renderTaskTable();
     const status = $("taskStatus");
     if (status) status.textContent = "Task created.";
   });
@@ -1859,6 +2065,8 @@ function initTasksUi() {
       await showAlert(`Unable to add user. ${err.message}`, { title: "Save failed" });
     }
   });
+
+  loadTasks({ reset: true });
 }
 
 function showPage(page) {

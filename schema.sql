@@ -156,6 +156,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
 CREATE INDEX IF NOT EXISTS idx_notification_users_name ON notification_users(name);
 
 -- =========================
+-- Pending agreements queue
+-- =========================
+CREATE TABLE IF NOT EXISTS pending_agreements (
+  id            TEXT PRIMARY KEY,
+  title         TEXT NOT NULL,
+  owner         TEXT NOT NULL,
+  due_date      TEXT,
+  status        TEXT,
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
+  ON pending_agreements(created_at);
+
+-- =========================
+-- Task queue
+-- =========================
+CREATE TABLE IF NOT EXISTS tasks (
+  id             TEXT PRIMARY KEY,
+  title          TEXT NOT NULL,
+  description    TEXT,
+  due_date       TEXT NOT NULL,
+  recurrence     TEXT NOT NULL DEFAULT 'none',
+  reminders_json TEXT NOT NULL,
+  assignees_json TEXT NOT NULL,
+  completed      INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_created_at
+  ON tasks(created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_completed
+  ON tasks(completed);
+
+-- =========================
 -- Job runs
 -- =========================
 CREATE TABLE IF NOT EXISTS job_runs (

@@ -177,6 +177,18 @@ def safe_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in keep).strip()[:180] or "upload.bin"
 
 
+def safe_json_list(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        return [str(item) for item in data]
+    return []
+
+
 def init_db():
     with db() as conn:
         conn.executescript(SCHEMA_SQL)
@@ -191,6 +203,13 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     def has_column(table: str, column: str) -> bool:
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
         return any(r["name"].lower() == column.lower() for r in rows)
+
+    def has_table(table: str) -> bool:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+            (table,),
+        ).fetchone()
+        return row is not None
 
     if not has_column("contracts", "agreement_type"):
         conn.execute(
@@ -229,6 +248,43 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.executemany(
             "INSERT OR IGNORE INTO notification_users (name, email, created_at) VALUES (?, ?, ?)",
             [(u["name"], u["email"], now_iso()) for u in DEFAULT_NOTIFICATION_USERS],
+        )
+
+    if not has_table("pending_agreements"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pending_agreements (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              owner TEXT NOT NULL,
+              due_date TEXT,
+              status TEXT,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
+              ON pending_agreements(created_at);
+            """
+        )
+
+    if not has_table("tasks"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              description TEXT,
+              due_date TEXT NOT NULL,
+              recurrence TEXT NOT NULL DEFAULT 'none',
+              reminders_json TEXT NOT NULL,
+              assignees_json TEXT NOT NULL,
+              completed INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_tasks_created_at
+              ON tasks(created_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_completed
+              ON tasks(completed);
+            """
         )
 
 # ----------------------------
@@ -304,6 +360,26 @@ class NotificationUser(BaseModel):
     id: int
     name: str
     email: str
+
+
+class PendingAgreementCreate(BaseModel):
+    title: str
+    owner: str
+    due_date: Optional[str] = None
+    status: Optional[str] = None
+
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    due_date: str
+    recurrence: str = "none"
+    reminders: List[str] = Field(default_factory=list)
+    assignees: List[str] = Field(default_factory=list)
+
+
+class TaskStatusUpdate(BaseModel):
+    completed: bool
 
 
 class ContractUpdate(BaseModel):
@@ -469,6 +545,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
   ON notification_users(lower(email));
 CREATE INDEX IF NOT EXISTS idx_notification_users_name
   ON notification_users(name);
+
+CREATE TABLE IF NOT EXISTS pending_agreements (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  due_date TEXT,
+  status TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
+  ON pending_agreements(created_at);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  due_date TEXT NOT NULL,
+  recurrence TEXT NOT NULL DEFAULT 'none',
+  reminders_json TEXT NOT NULL,
+  assignees_json TEXT NOT NULL,
+  completed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_at
+  ON tasks(created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_completed
+  ON tasks(completed);
 
 CREATE TABLE IF NOT EXISTS job_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -777,6 +880,182 @@ def delete_notification_user(user_id: int):
             raise HTTPException(status_code=404, detail="User not found")
         conn.execute("DELETE FROM notification_users WHERE id = ?", (user_id,))
         return {"deleted": user_id}
+
+
+@app.get("/api/pending-agreements")
+def list_pending_agreements(
+    limit: int = 20,
+    offset: int = 0,
+    query: str = "",
+):
+    limit = max(1, min(limit, 100))
+    offset = max(offset, 0)
+    where_clause = ""
+    params: List[Any] = []
+    if query:
+        where_clause = (
+            "WHERE lower(title) LIKE ? OR lower(owner) LIKE ? "
+            "OR lower(coalesce(status, '')) LIKE ?"
+        )
+        like = f"%{query.lower()}%"
+        params.extend([like, like, like])
+
+    with db() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(1) AS count FROM pending_agreements {where_clause}",
+            params,
+        ).fetchone()["count"]
+        rows = conn.execute(
+            f"""
+            SELECT id, title, owner, due_date, status, created_at
+            FROM pending_agreements
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        ).fetchall()
+        return {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+
+@app.post("/api/pending-agreements")
+def create_pending_agreement(payload: PendingAgreementCreate):
+    title = payload.title.strip()
+    owner = payload.owner.strip()
+    if not title or not owner:
+        raise HTTPException(status_code=400, detail="title and owner are required")
+    agreement_id = str(uuid.uuid4())
+    due_date = payload.due_date.strip() if payload.due_date else None
+    status = payload.status.strip() if payload.status else None
+    created_at = now_iso()
+
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO pending_agreements (id, title, owner, due_date, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (agreement_id, title, owner, due_date, status, created_at),
+        )
+    return {
+        "id": agreement_id,
+        "title": title,
+        "owner": owner,
+        "due_date": due_date,
+        "status": status,
+        "created_at": created_at,
+    }
+
+
+@app.get("/api/tasks")
+def list_tasks(
+    limit: int = 20,
+    offset: int = 0,
+    query: str = "",
+):
+    limit = max(1, min(limit, 100))
+    offset = max(offset, 0)
+    where_clause = ""
+    params: List[Any] = []
+    if query:
+        where_clause = (
+            "WHERE lower(title) LIKE ? OR lower(coalesce(description, '')) LIKE ? "
+            "OR lower(assignees_json) LIKE ?"
+        )
+        like = f"%{query.lower()}%"
+        params.extend([like, like, like])
+
+    with db() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(1) AS count FROM tasks {where_clause}",
+            params,
+        ).fetchone()["count"]
+        rows = conn.execute(
+            f"""
+            SELECT id, title, description, due_date, recurrence, reminders_json, assignees_json,
+                   completed, created_at
+            FROM tasks
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            data = dict(row)
+            data["reminders"] = safe_json_list(data.pop("reminders_json", None))
+            data["assignees"] = safe_json_list(data.pop("assignees_json", None))
+            data["completed"] = bool(data.get("completed"))
+            items.append(data)
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+
+@app.post("/api/tasks")
+def create_task(payload: TaskCreate):
+    title = payload.title.strip()
+    due_date = payload.due_date.strip()
+    if not title or not due_date:
+        raise HTTPException(status_code=400, detail="title and due_date are required")
+    task_id = str(uuid.uuid4())
+    created_at = now_iso()
+    description = payload.description.strip() if payload.description else None
+    recurrence = (payload.recurrence or "none").strip() or "none"
+    reminders_json = json.dumps(payload.reminders or [])
+    assignees_json = json.dumps(payload.assignees or [])
+
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO tasks (id, title, description, due_date, recurrence, reminders_json,
+                               assignees_json, completed, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+            """,
+            (
+                task_id,
+                title,
+                description,
+                due_date,
+                recurrence,
+                reminders_json,
+                assignees_json,
+                created_at,
+            ),
+        )
+    return {
+        "id": task_id,
+        "title": title,
+        "description": description,
+        "due_date": due_date,
+        "recurrence": recurrence,
+        "reminders": payload.reminders or [],
+        "assignees": payload.assignees or [],
+        "completed": False,
+        "created_at": created_at,
+    }
+
+
+@app.patch("/api/tasks/{task_id}")
+def update_task_status(task_id: str, payload: TaskStatusUpdate):
+    with db() as conn:
+        row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found")
+        conn.execute(
+            "UPDATE tasks SET completed = ? WHERE id = ?",
+            (1 if payload.completed else 0, task_id),
+        )
+        return {"id": task_id, "completed": payload.completed}
 
 
 @app.get("/api/terms/definitions")
