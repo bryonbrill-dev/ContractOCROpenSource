@@ -205,6 +205,32 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_contracts_original_filename ON contracts(original_filename)"
     )
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notification_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
+        ON notification_users(lower(email))
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notification_users_name ON notification_users(name)"
+    )
+    existing = conn.execute("SELECT COUNT(1) AS count FROM notification_users").fetchone()
+    if existing and existing["count"] == 0:
+        conn.executemany(
+            "INSERT OR IGNORE INTO notification_users (name, email, created_at) VALUES (?, ?, ?)",
+            [(u["name"], u["email"], now_iso()) for u in DEFAULT_NOTIFICATION_USERS],
+        )
+
 # ----------------------------
 # Models
 # ----------------------------
@@ -259,6 +285,25 @@ class TagCreate(BaseModel):
 class TagUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+
+
+class NotificationUserCreate(BaseModel):
+    name: str
+    email: str
+
+    @validator("name", pre=True)
+    def normalize_name(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @validator("email", pre=True)
+    def normalize_email(cls, value: str) -> str:
+        return str(value or "").strip().lower()
+
+
+class NotificationUser(BaseModel):
+    id: int
+    name: str
+    email: str
 
 
 class ContractUpdate(BaseModel):
@@ -414,6 +459,17 @@ CREATE TABLE IF NOT EXISTS reminder_sends (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_reminder_sends_unique
   ON reminder_sends(event_id, offset_days, scheduled_for);
 
+CREATE TABLE IF NOT EXISTS notification_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
+  ON notification_users(lower(email));
+CREATE INDEX IF NOT EXISTS idx_notification_users_name
+  ON notification_users(name);
+
 CREATE TABLE IF NOT EXISTS job_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_name TEXT NOT NULL,
@@ -477,6 +533,13 @@ UNION ALL SELECT id, 'employment', datetime('now') FROM tags WHERE name = 'Emplo
 UNION ALL SELECT id, 'employee', datetime('now') FROM tags WHERE name = 'Employment'
 UNION ALL SELECT id, 'offer letter', datetime('now') FROM tags WHERE name = 'Employment';
 """
+
+DEFAULT_NOTIFICATION_USERS = [
+    {"name": "Avery Carter", "email": "avery.carter@contractsuite.com"},
+    {"name": "Jordan Lee", "email": "jordan.lee@contractsuite.com"},
+    {"name": "Priya Patel", "email": "priya.patel@contractsuite.com"},
+    {"name": "Morgan Rivera", "email": "morgan.rivera@contractsuite.com"},
+]
 
 # ----------------------------
 # Tag + agreement helpers
@@ -669,6 +732,51 @@ def delete_tag(tag_id: int):
     with db() as conn:
         conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
         return {"deleted": tag_id}
+
+
+# ----------------------------
+# Notification users
+# ----------------------------
+@app.get("/api/notification-users")
+def list_notification_users():
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, email FROM notification_users ORDER BY name ASC, email ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/notification-users")
+def create_notification_user(payload: NotificationUserCreate):
+    name = payload.name.strip()
+    email = payload.email.strip().lower()
+    if not name or not email:
+        raise HTTPException(status_code=400, detail="name and email are required")
+
+    with db() as conn:
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO notification_users (name, email, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (name, email, now_iso()),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="user already exists") from exc
+        return {"id": cur.lastrowid, "name": name, "email": email}
+
+
+@app.delete("/api/notification-users/{user_id}")
+def delete_notification_user(user_id: int):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM notification_users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        conn.execute("DELETE FROM notification_users WHERE id = ?", (user_id,))
+        return {"deleted": user_id}
 
 
 @app.get("/api/terms/definitions")

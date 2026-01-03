@@ -142,6 +142,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_reminder_sends_unique
   ON reminder_sends(event_id, offset_days, scheduled_for);
 
 -- =========================
+-- Notification users
+-- =========================
+CREATE TABLE IF NOT EXISTS notification_users (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  email         TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
+  ON notification_users(lower(email));
+CREATE INDEX IF NOT EXISTS idx_notification_users_name ON notification_users(name);
+
+-- =========================
 -- Job runs
 -- =========================
 CREATE TABLE IF NOT EXISTS job_runs (

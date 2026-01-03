@@ -15,12 +15,7 @@ const state = {
   currentPage: "contracts",
   selectedContractId: null,
   previewFullscreen: false,
-  notificationUsers: [
-    { name: "Avery Carter", email: "avery.carter@contractsuite.com" },
-    { name: "Jordan Lee", email: "jordan.lee@contractsuite.com" },
-    { name: "Priya Patel", email: "priya.patel@contractsuite.com" },
-    { name: "Morgan Rivera", email: "morgan.rivera@contractsuite.com" },
-  ],
+  notificationUsers: [],
   pendingAgreementReminders: [
     {
       id: "pending-reminder-1",
@@ -271,6 +266,19 @@ async function apiFetch(path, opts = {}) {
   return res;
 }
 
+async function createNotificationUser(payload) {
+  const res = await apiFetch("/api/notification-users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function deleteNotificationUser(userId) {
+  await apiFetch(`/api/notification-users/${userId}`, { method: "DELETE" });
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return "Unknown date";
   const d = new Date(dateStr);
@@ -342,15 +350,19 @@ async function testApi() {
 }
 
 async function loadReferenceData() {
-  const [defsRes, tagsRes, agRes] = await Promise.all([
+  const [defsRes, tagsRes, agRes, usersRes] = await Promise.all([
     apiFetch("/api/terms/definitions"),
     apiFetch("/api/tags"),
     apiFetch("/api/agreement-types"),
+    apiFetch("/api/notification-users"),
   ]);
   state.definitions = await defsRes.json();
   state.tags = await tagsRes.json();
   state.agreementTypes = await agRes.json();
+  state.notificationUsers = await usersRes.json();
   renderAllContractsFilters();
+  renderNotificationOptions();
+  renderUserDirectories();
 }
 
 async function loadContractsList() {
@@ -1566,7 +1578,9 @@ function renderUserDirectories() {
         <div class="folder-card">
           <div class="folder-header">
             <div class="folder-title">${escapeHtml(user.name)}</div>
-            <button class="link-button" data-remove-user="${escapeHtml(user.email)}">Remove</button>
+            <button class="link-button" data-remove-user="${user.id}" data-remove-email="${escapeHtml(
+          user.email,
+        )}">Remove</button>
           </div>
           <div class="folder-body small">${escapeHtml(user.email)}</div>
         </div>
@@ -1579,11 +1593,23 @@ function renderUserDirectories() {
     const container = $(targetId);
     if (!container) return;
     container.querySelectorAll("button[data-remove-user]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const email = btn.dataset.removeUser;
-        state.notificationUsers = state.notificationUsers.filter((user) => user.email !== email);
-        renderUserDirectories();
-        renderNotificationOptions();
+      btn.addEventListener("click", async () => {
+        const userId = Number.parseInt(btn.dataset.removeUser, 10);
+        const email = btn.dataset.removeEmail;
+        const user = state.notificationUsers.find((entry) => entry.id === userId);
+        if (!user) {
+          return;
+        }
+        try {
+          await deleteNotificationUser(userId);
+          state.notificationUsers = state.notificationUsers.filter((entry) => entry.id !== userId);
+          renderUserDirectories();
+          renderNotificationOptions();
+        } catch (err) {
+          await showAlert(`Unable to remove ${email}. ${err.message}`, {
+            title: "Remove failed",
+          });
+        }
       });
     });
   });
@@ -1758,13 +1784,18 @@ function initPendingAgreementsUi() {
       await showAlert("That email is already in the list.", { title: "Duplicate user" });
       return;
     }
-    state.notificationUsers.push({ name, email });
-    if ($("pendingUserName")) $("pendingUserName").value = "";
-    if ($("pendingUserEmail")) $("pendingUserEmail").value = "";
-    renderUserDirectories();
-    renderNotificationOptions();
-    const status = $("pendingUserStatus");
-    if (status) status.textContent = "User added.";
+    try {
+      const created = await createNotificationUser({ name, email });
+      state.notificationUsers.push(created);
+      if ($("pendingUserName")) $("pendingUserName").value = "";
+      if ($("pendingUserEmail")) $("pendingUserEmail").value = "";
+      renderUserDirectories();
+      renderNotificationOptions();
+      const status = $("pendingUserStatus");
+      if (status) status.textContent = "User added.";
+    } catch (err) {
+      await showAlert(`Unable to add user. ${err.message}`, { title: "Save failed" });
+    }
   });
 }
 
@@ -1815,13 +1846,18 @@ function initTasksUi() {
       await showAlert("That email is already in the list.", { title: "Duplicate user" });
       return;
     }
-    state.notificationUsers.push({ name, email });
-    if ($("taskUserName")) $("taskUserName").value = "";
-    if ($("taskUserEmail")) $("taskUserEmail").value = "";
-    renderUserDirectories();
-    renderNotificationOptions();
-    const status = $("taskUserStatus");
-    if (status) status.textContent = "User added.";
+    try {
+      const created = await createNotificationUser({ name, email });
+      state.notificationUsers.push(created);
+      if ($("taskUserName")) $("taskUserName").value = "";
+      if ($("taskUserEmail")) $("taskUserEmail").value = "";
+      renderUserDirectories();
+      renderNotificationOptions();
+      const status = $("taskUserStatus");
+      if (status) status.textContent = "User added.";
+    } catch (err) {
+      await showAlert(`Unable to add user. ${err.message}`, { title: "Save failed" });
+    }
   });
 }
 
