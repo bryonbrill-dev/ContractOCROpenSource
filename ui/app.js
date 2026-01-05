@@ -16,15 +16,7 @@ const state = {
   selectedContractId: null,
   previewFullscreen: false,
   notificationUsers: [],
-  pendingAgreementReminders: [
-    {
-      id: "pending-reminder-1",
-      frequency: "weekly",
-      roles: ["Legal", "Procurement"],
-      recipients: ["avery.carter@contractsuite.com", "priya.patel@contractsuite.com"],
-      message: "Weekly approval reminder: review pending agreements before Friday.",
-    },
-  ],
+  pendingAgreementReminders: [],
   pendingAgreements: [],
   pendingAgreementsQuery: "",
   pendingAgreementsOffset: 0,
@@ -49,6 +41,8 @@ const TERM_EVENT_MAP = {
 };
 const STANDARD_EVENT_TYPES = ["renewal", "termination", "effective", "auto_opt_out"];
 const modalState = { resolver: null, showCancel: false };
+const pendingReminderModalState = { reminderId: null };
+const pendingAgreementModalState = { agreementId: null };
 
 function getModalElements() {
   return {
@@ -132,6 +126,89 @@ function initModal() {
       closeModal(!modalState.showCancel);
     }
   });
+}
+
+function getPendingReminderModalElements() {
+  return {
+    overlay: $("pendingReminderModal"),
+    title: $("pendingReminderModalTitle"),
+    frequency: $("pendingReminderEditFrequency"),
+    roleContainer: $("pendingReminderEditRoles"),
+    recipientContainer: $("pendingReminderEditRecipients"),
+    message: $("pendingReminderEditMessage"),
+    cancel: $("pendingReminderEditCancel"),
+    close: $("pendingReminderEditClose"),
+    save: $("pendingReminderEditSave"),
+  };
+}
+
+function openPendingReminderModal(reminder) {
+  const { overlay, title, frequency, message } = getPendingReminderModalElements();
+  if (!overlay || !frequency || !title || !message) return;
+  pendingReminderModalState.reminderId = reminder.id;
+  title.textContent = "Edit reminder rule";
+  frequency.value = reminder.frequency || "weekly";
+  message.value = reminder.message || "";
+  renderCheckboxList("pendingReminderEditRoles", PENDING_ROLE_OPTIONS, reminder.roles || []);
+  renderCheckboxList(
+    "pendingReminderEditRecipients",
+    state.notificationUsers,
+    reminder.recipients || [],
+  );
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  frequency.focus();
+}
+
+function closePendingReminderModal() {
+  const { overlay } = getPendingReminderModalElements();
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+  pendingReminderModalState.reminderId = null;
+}
+
+function getPendingAgreementModalElements() {
+  return {
+    overlay: $("pendingAgreementModal"),
+    title: $("pendingAgreementModalTitle"),
+    name: $("pendingAgreementEditTitle"),
+    owner: $("pendingAgreementEditOwner"),
+    dueDate: $("pendingAgreementEditDueDate"),
+    status: $("pendingAgreementEditStatus"),
+    cancel: $("pendingAgreementEditCancel"),
+    close: $("pendingAgreementEditClose"),
+    save: $("pendingAgreementEditSave"),
+  };
+}
+
+function toInputDate(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString().slice(0, 10);
+}
+
+function openPendingAgreementModal(agreement) {
+  const { overlay, title, name, owner, dueDate, status } = getPendingAgreementModalElements();
+  if (!overlay || !title || !name || !owner || !dueDate || !status) return;
+  pendingAgreementModalState.agreementId = agreement.id;
+  title.textContent = "Edit pending agreement";
+  name.value = agreement.title || "";
+  owner.value = agreement.owner || "";
+  dueDate.value = toInputDate(agreement.due_date || agreement.dueDate);
+  status.value = agreement.status || "";
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  name.focus();
+}
+
+function closePendingAgreementModal() {
+  const { overlay } = getPendingAgreementModalElements();
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+  pendingAgreementModalState.agreementId = null;
 }
 
 function getApiBase() {
@@ -288,6 +365,33 @@ async function deleteNotificationUser(userId) {
   await apiFetch(`/api/notification-users/${userId}`, { method: "DELETE" });
 }
 
+async function fetchPendingAgreementReminders() {
+  const res = await apiFetch("/api/pending-agreement-reminders");
+  return res.json();
+}
+
+async function createPendingAgreementReminder(payload) {
+  const res = await apiFetch("/api/pending-agreement-reminders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function updatePendingAgreementReminder(reminderId, payload) {
+  const res = await apiFetch(`/api/pending-agreement-reminders/${reminderId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function deletePendingAgreementReminder(reminderId) {
+  await apiFetch(`/api/pending-agreement-reminders/${reminderId}`, { method: "DELETE" });
+}
+
 async function fetchPendingAgreements({ limit = 20, offset = 0, query = "" } = {}) {
   const params = new URLSearchParams();
   params.set("limit", limit);
@@ -295,6 +399,19 @@ async function fetchPendingAgreements({ limit = 20, offset = 0, query = "" } = {
   if (query) params.set("query", query);
   const res = await apiFetch(`/api/pending-agreements?${params.toString()}`);
   return res.json();
+}
+
+async function updatePendingAgreement(agreementId, payload) {
+  const res = await apiFetch(`/api/pending-agreements/${agreementId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function deletePendingAgreement(agreementId) {
+  await apiFetch(`/api/pending-agreements/${agreementId}`, { method: "DELETE" });
 }
 
 async function fetchTasks({ limit = 20, offset = 0, query = "" } = {}) {
@@ -407,6 +524,7 @@ async function loadReferenceData() {
   state.notificationUsers = await usersRes.json();
   renderAllContractsFilters();
   renderNotificationOptions();
+  renderPendingReminderTable();
   renderUserDirectories();
 }
 
@@ -1717,6 +1835,21 @@ async function loadPendingAgreements({ reset = false } = {}) {
   }
 }
 
+async function loadPendingAgreementReminders() {
+  const table = $("pendingReminderTable");
+  if (table) {
+    table.innerHTML = `<tr><td colspan="5" class="muted">Loading…</td></tr>`;
+  }
+  try {
+    state.pendingAgreementReminders = await fetchPendingAgreementReminders();
+    renderPendingReminderTable();
+  } catch (err) {
+    if (table) {
+      table.innerHTML = `<tr><td colspan="5" class="muted">Unable to load reminders. ${err.message}</td></tr>`;
+    }
+  }
+}
+
 function updateTasksMeta() {
   const meta = $("taskQueueMeta");
   const loadMore = $("taskQueueLoadMore");
@@ -1787,18 +1920,45 @@ function renderPendingReminderTable() {
           <td>${escapeHtml(reminder.roles.join(", ") || "None")}</td>
           <td>${escapeHtml(recipients || "None")}</td>
           <td>${escapeHtml(reminder.message || "")}</td>
-          <td><button data-remove-reminder="${reminder.id}">Remove</button></td>
+          <td>
+            <button data-edit-reminder="${reminder.id}">Edit</button>
+            <button data-remove-reminder="${reminder.id}">Remove</button>
+          </td>
         </tr>
       `;
     })
     .join("");
 
-  table.querySelectorAll("button[data-remove-reminder]").forEach((btn) => {
+  table.querySelectorAll("button[data-edit-reminder]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.pendingAgreementReminders = state.pendingAgreementReminders.filter(
-        (reminder) => reminder.id !== btn.dataset.removeReminder,
+      const reminder = state.pendingAgreementReminders.find(
+        (entry) => entry.id === btn.dataset.editReminder,
       );
-      renderPendingReminderTable();
+      if (!reminder) return;
+      openPendingReminderModal(reminder);
+    });
+  });
+
+  table.querySelectorAll("button[data-remove-reminder]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const reminder = state.pendingAgreementReminders.find(
+        (entry) => entry.id === btn.dataset.removeReminder,
+      );
+      if (!reminder) return;
+      const confirmed = await showConfirm(
+        `Remove the reminder rule for ${titleCase(reminder.frequency)} reminders?`,
+        { title: "Remove reminder" },
+      );
+      if (!confirmed) return;
+      try {
+        await deletePendingAgreementReminder(reminder.id);
+        state.pendingAgreementReminders = state.pendingAgreementReminders.filter(
+          (entry) => entry.id !== reminder.id,
+        );
+        renderPendingReminderTable();
+      } catch (err) {
+        await showAlert(`Unable to remove reminder rule. ${err.message}`, { title: "Remove failed" });
+      }
     });
   });
 }
@@ -1819,7 +1979,11 @@ function renderPendingAgreementsQueue() {
           <td>${escapeHtml(formatDate(agreement.due_date || agreement.dueDate))}</td>
           <td>${escapeHtml(agreement.status || "")}</td>
           <td>${escapeHtml(formatDate(agreement.created_at))}</td>
-          <td><button data-nudge-agreement="${agreement.id}">Nudge</button></td>
+          <td>
+            <button data-nudge-agreement="${agreement.id}">Nudge</button>
+            <button data-edit-agreement="${agreement.id}">Edit</button>
+            <button data-remove-agreement="${agreement.id}">Remove</button>
+          </td>
         </tr>
       `,
     )
@@ -1833,6 +1997,32 @@ function renderPendingAgreementsQueue() {
         `A nudge email would be sent for "${agreement.title}" to ${agreement.owner}.`,
         { title: "Nudge queued" },
       );
+    });
+  });
+
+  table.querySelectorAll("button[data-edit-agreement]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const agreement = state.pendingAgreements.find((item) => item.id === btn.dataset.editAgreement);
+      if (!agreement) return;
+      openPendingAgreementModal(agreement);
+    });
+  });
+
+  table.querySelectorAll("button[data-remove-agreement]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const agreement = state.pendingAgreements.find((item) => item.id === btn.dataset.removeAgreement);
+      if (!agreement) return;
+      const confirmed = await showConfirm(
+        `Remove "${agreement.title}" from the pending queue?`,
+        { title: "Remove pending agreement" },
+      );
+      if (!confirmed) return;
+      try {
+        await deletePendingAgreement(agreement.id);
+        await loadPendingAgreements({ reset: true });
+      } catch (err) {
+        await showAlert(`Unable to remove pending agreement. ${err.message}`, { title: "Remove failed" });
+      }
     });
   });
 }
@@ -1902,6 +2092,84 @@ function initPendingAgreementsUi() {
   renderPendingAgreementsQueue();
   renderUserDirectories();
 
+  const reminderModal = getPendingReminderModalElements();
+  reminderModal.cancel?.addEventListener("click", closePendingReminderModal);
+  reminderModal.close?.addEventListener("click", closePendingReminderModal);
+  reminderModal.overlay?.addEventListener("click", (event) => {
+    if (event.target === reminderModal.overlay) {
+      closePendingReminderModal();
+    }
+  });
+  reminderModal.save?.addEventListener("click", async () => {
+    const reminderId = pendingReminderModalState.reminderId;
+    if (!reminderId) return;
+    const frequency = reminderModal.frequency?.value || "weekly";
+    const roles = getCheckedValues("pendingReminderEditRoles");
+    const recipients = getCheckedValues("pendingReminderEditRecipients");
+    const message = reminderModal.message?.value?.trim();
+
+    if (!roles.length && !recipients.length) {
+      await showAlert("Select at least one role or individual recipient.", { title: "Missing recipients" });
+      return;
+    }
+
+    try {
+      const updated = await updatePendingAgreementReminder(reminderId, {
+        frequency,
+        roles,
+        recipients,
+        message,
+      });
+      state.pendingAgreementReminders = state.pendingAgreementReminders.map((entry) =>
+        entry.id === reminderId ? updated : entry,
+      );
+      renderPendingReminderTable();
+      closePendingReminderModal();
+      await showAlert("Reminder rule updated.", { title: "Changes saved" });
+    } catch (err) {
+      await showAlert(`Unable to update reminder rule. ${err.message}`, { title: "Save failed" });
+    }
+  });
+
+  const agreementModal = getPendingAgreementModalElements();
+  agreementModal.cancel?.addEventListener("click", closePendingAgreementModal);
+  agreementModal.close?.addEventListener("click", closePendingAgreementModal);
+  agreementModal.overlay?.addEventListener("click", (event) => {
+    if (event.target === agreementModal.overlay) {
+      closePendingAgreementModal();
+    }
+  });
+  agreementModal.save?.addEventListener("click", async () => {
+    const agreementId = pendingAgreementModalState.agreementId;
+    if (!agreementId) return;
+    const title = agreementModal.name?.value?.trim() || "";
+    const owner = agreementModal.owner?.value?.trim() || "";
+    const dueDate = agreementModal.dueDate?.value ?? "";
+    const status = agreementModal.status?.value?.trim() ?? "";
+
+    if (!title || !owner) {
+      await showAlert("Agreement title and owner are required.", { title: "Missing info" });
+      return;
+    }
+
+    try {
+      const updated = await updatePendingAgreement(agreementId, {
+        title,
+        owner,
+        due_date: dueDate,
+        status,
+      });
+      state.pendingAgreements = state.pendingAgreements.map((entry) =>
+        entry.id === agreementId ? updated : entry,
+      );
+      renderPendingAgreementsQueue();
+      closePendingAgreementModal();
+      await showAlert("Pending agreement updated.", { title: "Changes saved" });
+    } catch (err) {
+      await showAlert(`Unable to update pending agreement. ${err.message}`, { title: "Save failed" });
+    }
+  });
+
   $("pendingAgreementsQueueExpand")?.addEventListener("click", () => toggleQueueExpanded("pendingAgreements"));
   $("pendingAgreementsLoadMore")?.addEventListener("click", async () => {
     await loadPendingAgreements();
@@ -1937,17 +2205,22 @@ function initPendingAgreementsUi() {
       return;
     }
 
-    state.pendingAgreementReminders.unshift({
-      id: `pending-reminder-${Date.now()}`,
-      frequency,
-      roles,
-      recipients,
-      message,
-    });
-    if ($("pendingReminderMessage")) $("pendingReminderMessage").value = "";
-    renderPendingReminderTable();
-    const status = $("pendingReminderStatus");
-    if (status) status.textContent = "Reminder rule saved.";
+    try {
+      const created = await createPendingAgreementReminder({
+        frequency,
+        roles,
+        recipients,
+        message,
+      });
+      state.pendingAgreementReminders.unshift(created);
+      if ($("pendingReminderMessage")) $("pendingReminderMessage").value = "";
+      renderPendingReminderTable();
+      const status = $("pendingReminderStatus");
+      if (status) status.textContent = "Reminder rule saved.";
+      await showAlert("Reminder rule saved.", { title: "Saved" });
+    } catch (err) {
+      await showAlert(`Unable to save reminder rule. ${err.message}`, { title: "Save failed" });
+    }
   });
 
   $("pendingUserAdd")?.addEventListener("click", async () => {
@@ -1976,6 +2249,7 @@ function initPendingAgreementsUi() {
   });
 
   loadPendingAgreements({ reset: true });
+  loadPendingAgreementReminders();
 }
 
 function initTasksUi() {

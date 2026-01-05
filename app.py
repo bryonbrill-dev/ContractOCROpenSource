@@ -266,6 +266,23 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             """
         )
 
+    if not has_table("pending_agreement_reminders"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pending_agreement_reminders (
+              id TEXT PRIMARY KEY,
+              frequency TEXT NOT NULL,
+              roles_json TEXT NOT NULL,
+              recipients_json TEXT NOT NULL,
+              message TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_agreement_reminders_created_at
+              ON pending_agreement_reminders(created_at);
+            """
+        )
+
     if not has_table("tasks"):
         conn.executescript(
             """
@@ -367,6 +384,70 @@ class PendingAgreementCreate(BaseModel):
     owner: str
     due_date: Optional[str] = None
     status: Optional[str] = None
+
+
+class PendingAgreementUpdate(BaseModel):
+    title: Optional[str] = None
+    owner: Optional[str] = None
+    due_date: Optional[str] = None
+    status: Optional[str] = None
+
+
+class PendingAgreementReminderCreate(BaseModel):
+    frequency: str
+    roles: List[str] = Field(default_factory=list)
+    recipients: List[str] = Field(default_factory=list)
+    message: Optional[str] = None
+
+    @validator("roles", "recipients", pre=True)
+    def normalize_list(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            return [str(v).strip() for v in value if str(v).strip()]
+        return []
+
+    @validator("frequency", pre=True)
+    def normalize_frequency(cls, value: str) -> str:
+        return str(value or "").strip().lower()
+
+    @validator("message", pre=True)
+    def normalize_message(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value).strip()
+
+
+class PendingAgreementReminderUpdate(BaseModel):
+    frequency: Optional[str] = None
+    roles: Optional[List[str]] = None
+    recipients: Optional[List[str]] = None
+    message: Optional[str] = None
+
+    @validator("roles", "recipients", pre=True)
+    def normalize_list(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            return [str(v).strip() for v in value if str(v).strip()]
+        return []
+
+    @validator("frequency", pre=True)
+    def normalize_frequency(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value).strip().lower()
+
+    @validator("message", pre=True)
+    def normalize_message(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
 
 
 class TaskCreate(BaseModel):
@@ -556,6 +637,18 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
   ON pending_agreements(created_at);
+
+CREATE TABLE IF NOT EXISTS pending_agreement_reminders (
+  id TEXT PRIMARY KEY,
+  frequency TEXT NOT NULL,
+  roles_json TEXT NOT NULL,
+  recipients_json TEXT NOT NULL,
+  message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_reminders_created_at
+  ON pending_agreement_reminders(created_at);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
@@ -950,6 +1043,197 @@ def create_pending_agreement(payload: PendingAgreementCreate):
         "status": status,
         "created_at": created_at,
     }
+
+
+@app.put("/api/pending-agreements/{agreement_id}")
+def update_pending_agreement(agreement_id: str, payload: PendingAgreementUpdate):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id, title, owner, due_date, status, created_at FROM pending_agreements WHERE id = ?",
+            (agreement_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+
+        title = row["title"]
+        owner = row["owner"]
+        due_date = row["due_date"]
+        status = row["status"]
+
+        if payload.title is not None:
+            cleaned = payload.title.strip()
+            if not cleaned:
+                raise HTTPException(status_code=400, detail="title cannot be empty")
+            title = cleaned
+        if payload.owner is not None:
+            cleaned = payload.owner.strip()
+            if not cleaned:
+                raise HTTPException(status_code=400, detail="owner cannot be empty")
+            owner = cleaned
+        if payload.due_date is not None:
+            due_date = payload.due_date.strip() or None
+        if payload.status is not None:
+            status = payload.status.strip() or None
+
+        conn.execute(
+            """
+            UPDATE pending_agreements
+            SET title = ?, owner = ?, due_date = ?, status = ?
+            WHERE id = ?
+            """,
+            (title, owner, due_date, status, agreement_id),
+        )
+
+    return {
+        "id": agreement_id,
+        "title": title,
+        "owner": owner,
+        "due_date": due_date,
+        "status": status,
+        "created_at": row["created_at"],
+    }
+
+
+@app.delete("/api/pending-agreements/{agreement_id}")
+def delete_pending_agreement(agreement_id: str):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM pending_agreements WHERE id = ?", (agreement_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+        conn.execute("DELETE FROM pending_agreements WHERE id = ?", (agreement_id,))
+        return {"deleted": agreement_id}
+
+
+@app.get("/api/pending-agreement-reminders")
+def list_pending_agreement_reminders():
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, frequency, roles_json, recipients_json, message, created_at, updated_at
+            FROM pending_agreement_reminders
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["roles"] = safe_json_list(item.pop("roles_json", None))
+            item["recipients"] = safe_json_list(item.pop("recipients_json", None))
+            items.append(item)
+        return items
+
+
+@app.post("/api/pending-agreement-reminders")
+def create_pending_agreement_reminder(payload: PendingAgreementReminderCreate):
+    if not payload.roles and not payload.recipients:
+        raise HTTPException(
+            status_code=400, detail="At least one role or recipient is required"
+        )
+
+    reminder_id = str(uuid.uuid4())
+    created_at = now_iso()
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO pending_agreement_reminders
+              (id, frequency, roles_json, recipients_json, message, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                reminder_id,
+                payload.frequency,
+                json.dumps(payload.roles or []),
+                json.dumps(payload.recipients or []),
+                payload.message,
+                created_at,
+                created_at,
+            ),
+        )
+    return {
+        "id": reminder_id,
+        "frequency": payload.frequency,
+        "roles": payload.roles,
+        "recipients": payload.recipients,
+        "message": payload.message,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+
+
+@app.put("/api/pending-agreement-reminders/{reminder_id}")
+def update_pending_agreement_reminder(reminder_id: str, payload: PendingAgreementReminderUpdate):
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, frequency, roles_json, recipients_json, message, created_at, updated_at
+            FROM pending_agreement_reminders WHERE id = ?
+            """,
+            (reminder_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Reminder rule not found")
+
+        frequency = row["frequency"]
+        roles = safe_json_list(row["roles_json"])
+        recipients = safe_json_list(row["recipients_json"])
+        message = row["message"]
+
+        if payload.frequency is not None:
+            if not payload.frequency:
+                raise HTTPException(status_code=400, detail="frequency cannot be empty")
+            frequency = payload.frequency
+        if payload.roles is not None:
+            roles = payload.roles
+        if payload.recipients is not None:
+            recipients = payload.recipients
+        if payload.message is not None:
+            message = payload.message
+
+        if not roles and not recipients:
+            raise HTTPException(
+                status_code=400, detail="At least one role or recipient is required"
+            )
+
+        updated_at = now_iso()
+        conn.execute(
+            """
+            UPDATE pending_agreement_reminders
+            SET frequency = ?, roles_json = ?, recipients_json = ?, message = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                frequency,
+                json.dumps(roles),
+                json.dumps(recipients),
+                message,
+                updated_at,
+                reminder_id,
+            ),
+        )
+    return {
+        "id": reminder_id,
+        "frequency": frequency,
+        "roles": roles,
+        "recipients": recipients,
+        "message": message,
+        "created_at": row["created_at"],
+        "updated_at": updated_at,
+    }
+
+
+@app.delete("/api/pending-agreement-reminders/{reminder_id}")
+def delete_pending_agreement_reminder(reminder_id: str):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM pending_agreement_reminders WHERE id = ?",
+            (reminder_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Reminder rule not found")
+        conn.execute("DELETE FROM pending_agreement_reminders WHERE id = ?", (reminder_id,))
+        return {"deleted": reminder_id}
 
 
 @app.get("/api/tasks")
