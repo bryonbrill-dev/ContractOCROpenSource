@@ -2235,7 +2235,7 @@ def _env_first(*keys: str) -> str:
         value = os.getenv(key)
         if value:
             cleaned = value.strip()
-            if cleaned:
+            if cleaned and cleaned not in {key, f"{key}_PLACEHOLDER"}:
                 return cleaned
     return ""
 
@@ -2244,19 +2244,27 @@ def _smtp_from_address() -> str:
     from_addr = _env_first("SMTP_FROM", "SMTP_FROM_ADDRESS")
     if from_addr:
         return from_addr
-    username = _env_first("SMTP_USERNAME", "SMTP_USER", "SMTP_LOGIN")
+    username = _env_first("SMTP_USERNAME", "SMTP_USER", "SMTP_LOGIN", "SMTPUsers")
     if username:
         return username
     raise RuntimeError("SMTP_FROM or SMTP_USERNAME must be set for email delivery")
 
 
 def _send_email(recipients: List[str], subject: str, body: str) -> None:
+    # SMTP configuration (set as environment variables):
+    #   SMTP_HOST        -> SMTP server hostname (e.g., smtp.sendgrid.net)
+    #   SMTP_PORT        -> SMTP server port (e.g., 587)
+    #   SMTP_USERNAME    -> SMTP login username (SendGrid uses "apikey")
+    #   SMTP_PASSWORD    -> SMTP login password (SendGrid API key value)
+    # Optional/alternate keys also accepted:
+    #   SMTP_SERVER or SMTP_Server (host), SMTPUsers (username), SMTP_Password (password)
+    #   SMTP_FROM / SMTP_FROM_ADDRESS (from email), SMTP_FROM_NAME (sender name)
     host = _env_first("SMTP_HOST", "SMTP_SERVER", "SMTP_Server")
     if not host:
         raise RuntimeError("SMTP_HOST is not configured")
 
     port = int(_env_first("SMTP_PORT") or "587")
-    username = _env_first("SMTP_USERNAME", "SMTP_USER", "SMTP_LOGIN")
+    username = _env_first("SMTP_USERNAME", "SMTP_USER", "SMTP_LOGIN", "SMTPUsers")
     password = _env_first("SMTP_PASSWORD", "SMTP_Password")
     use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     use_ssl = os.getenv("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
