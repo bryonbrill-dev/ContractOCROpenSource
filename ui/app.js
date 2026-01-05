@@ -2070,7 +2070,7 @@ function initTasksUi() {
 }
 
 function showPage(page) {
-  const pages = ["contracts", "allContracts", "events", "planner", "pendingAgreements", "tasks", "outputs"];
+  const pages = ["contracts", "allContracts", "planner", "pendingAgreements", "tasks", "outputs"];
   state.currentPage = page;
   pages.forEach((p) => {
     $(p + "Page")?.classList.toggle("hidden", p !== page);
@@ -2080,11 +2080,11 @@ function showPage(page) {
   if (page === "allContracts") {
     loadAllContracts(true);
   }
-  if (page === "events" && !state.events.length) {
-    loadEvents();
-  }
   if (page === "planner") {
     loadPlanner();
+    if (!state.events.length) {
+      loadEvents();
+    }
   }
 }
 
@@ -2359,7 +2359,6 @@ function initPlannerUi() {
 
 $("navContracts")?.addEventListener("click", () => showPage("contracts"));
 $("navAllContracts")?.addEventListener("click", () => showPage("allContracts"));
-$("navEvents")?.addEventListener("click", () => showPage("events"));
 $("navPlanner")?.addEventListener("click", () => showPage("planner"));
 $("navPendingAgreements")?.addEventListener("click", () => showPage("pendingAgreements"));
 $("navTasks")?.addEventListener("click", () => showPage("tasks"));

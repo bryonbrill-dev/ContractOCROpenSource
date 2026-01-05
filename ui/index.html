@@ -187,7 +187,6 @@
   <div class="nav">
     <button id="navContracts" class="active">Contracts</button>
     <button id="navAllContracts">All Contracts</button>
-    <button id="navEvents">Events</button>
     <button id="navPlanner">Planner</button>
     <button id="navPendingAgreements">Pending Agreements</button>
     <button id="navTasks">Tasks</button>
@@ -243,81 +242,6 @@
           </table>
         </div>
       </div>
-    </div>
-  </div>
-
-  <div id="eventsPage" class="hidden">
-    <div class="card" style="margin-top:16px">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-            <div>
-              <h3 style="margin:0">Upcoming Events</h3>
-              <div class="muted small">Search and review renewal/termination timelines by date and contract.</div>
-            </div>
-            <div class="inline">
-              <button id="eventsRefresh">Refresh</button>
-              <button id="eventsExport">Export CSV</button>
-            </div>
-          </div>
-
-          <div class="row wrap filters" style="margin-top:12px; gap:12px;">
-            <label style="min-width:220px;">
-              <span class="label-with-info">
-                <span class="info-icon" title="Select a month to focus the event list. Use the arrows to move month by month.">i</span>
-                <span>Show Month</span>
-              </span>
-              <div class="month-nav">
-                <button type="button" id="eventPrevMonth">◀</button>
-                <input id="eventMonth" type="month" />
-                <button type="button" id="eventNextMonth">▶</button>
-              </div>
-            </label>
-            <label style="min-width:140px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
-              <input type="checkbox" id="eventAllMonths" />
-              Show all months
-            </label>
-            <label style="min-width:160px;">
-              <span class="label-with-info">
-                <span class="info-icon" title="Event types come from extracted terms and manual entries. Renewal/termination dates appear when the contract has a term length or specific date captured. Auto-renewing contracts without a term length may not show future renewals.">i</span>
-                <span>Event Type</span>
-              </span>
-              <select id="eventTypeFilter">
-                <option value="all">All types</option>
-                <option value="renewal">Renewal</option>
-            <option value="termination">Termination</option>
-            <option value="auto_opt_out">Auto opt-out</option>
-            <option value="effective">Effective</option>
-          </select>
-        </label>
-        <label style="min-width:160px;">
-          <span class="label-with-info">
-            <span class="info-icon" title="Sort events by date or contract title.">i</span>
-            <span>Sort</span>
-          </span>
-          <select id="eventSort">
-            <option value="date_asc">Date ↑</option>
-            <option value="date_desc">Date ↓</option>
-            <option value="title_asc">Title A→Z</option>
-            <option value="title_desc">Title Z→A</option>
-          </select>
-        </label>
-        <label style="flex:1; min-width:200px;">
-          <span class="label-with-info">
-            <span class="info-icon" title="Search by contract title, vendor, or event type.">i</span>
-            <span>Search contracts or event types</span>
-          </span>
-          <input id="eventSearch" type="text" placeholder="Search by contract, vendor, or event…" />
-        </label>
-        <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
-          <input type="checkbox" id="expiringOnly" />
-          <span class="label-with-info">
-            <span class="info-icon" title="Filters to renewal, termination, and auto opt-out deadlines so evergreen contracts stay out of the list unless they have a defined notice or end date.">i</span>
-            <span>Expiring-only</span>
-          </span>
-        </label>
-      </div>
-
-      <div class="muted small" id="eventsStatus" style="margin-top:4px"></div>
-      <div id="eventsList" class="folder-list"></div>
     </div>
   </div>
 
@@ -439,7 +363,7 @@
 
       <div class="muted small" id="plannerStatus" style="margin-top:4px"></div>
       <div class="section" style="margin-top:10px;">
-        <h4>Monthly Planner Grid</h4>
+        <h4>Calendar View</h4>
         <div class="muted small">Shows events on the selected month. Abbreviated contract names appear on each day.</div>
         <div id="plannerCalendar" class="planner-calendar"></div>
       </div>
@@ -454,6 +378,78 @@
         </thead>
         <tbody id="plannerTable"></tbody>
       </table>
+      <div class="section" style="margin-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div>
+            <h4 style="margin:0">List View</h4>
+            <div class="muted small">Search and review renewal/termination timelines by date and contract.</div>
+          </div>
+          <div class="inline">
+            <button id="eventsRefresh">Refresh</button>
+            <button id="eventsExport">Export CSV</button>
+          </div>
+        </div>
+
+        <div class="row wrap filters" style="margin-top:12px; gap:12px;">
+          <label style="min-width:220px;">
+            <span class="label-with-info">
+              <span class="info-icon" title="Select a month to focus the event list. Use the arrows to move month by month.">i</span>
+              <span>Show Month</span>
+            </span>
+            <div class="month-nav">
+              <button type="button" id="eventPrevMonth">◀</button>
+              <input id="eventMonth" type="month" />
+              <button type="button" id="eventNextMonth">▶</button>
+            </div>
+          </label>
+          <label style="min-width:140px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
+            <input type="checkbox" id="eventAllMonths" />
+            Show all months
+          </label>
+          <label style="min-width:160px;">
+            <span class="label-with-info">
+              <span class="info-icon" title="Event types come from extracted terms and manual entries. Renewal/termination dates appear when the contract has a term length or specific date captured. Auto-renewing contracts without a term length may not show future renewals.">i</span>
+              <span>Event Type</span>
+            </span>
+            <select id="eventTypeFilter">
+              <option value="all">All types</option>
+              <option value="renewal">Renewal</option>
+              <option value="termination">Termination</option>
+              <option value="auto_opt_out">Auto opt-out</option>
+              <option value="effective">Effective</option>
+            </select>
+          </label>
+          <label style="min-width:160px;">
+            <span class="label-with-info">
+              <span class="info-icon" title="Sort events by date or contract title.">i</span>
+              <span>Sort</span>
+            </span>
+            <select id="eventSort">
+              <option value="date_asc">Date ↑</option>
+              <option value="date_desc">Date ↓</option>
+              <option value="title_asc">Title A→Z</option>
+              <option value="title_desc">Title Z→A</option>
+            </select>
+          </label>
+          <label style="flex:1; min-width:200px;">
+            <span class="label-with-info">
+              <span class="info-icon" title="Search by contract title, vendor, or event type.">i</span>
+              <span>Search contracts or event types</span>
+            </span>
+            <input id="eventSearch" type="text" placeholder="Search by contract, vendor, or event…" />
+          </label>
+          <label style="min-width:170px; align-items:center; flex-direction:row; gap:8px; margin-top:18px;">
+            <input type="checkbox" id="expiringOnly" />
+            <span class="label-with-info">
+              <span class="info-icon" title="Filters to renewal, termination, and auto opt-out deadlines so evergreen contracts stay out of the list unless they have a defined notice or end date.">i</span>
+              <span>Expiring-only</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="muted small" id="eventsStatus" style="margin-top:4px"></div>
+        <div id="eventsList" class="folder-list"></div>
+      </div>
     </div>
   </div>
 
@@ -758,8 +754,7 @@
         <ul class="small" style="margin:8px 0 0 18px;">
           <li><b>Contracts</b> — Review recent uploads, open a contract detail view, edit terms, and manage events.</li>
           <li><b>All Contracts</b> — Search, filter, and export the full contract list across all statuses.</li>
-          <li><b>Events</b> — Track renewal, termination, effective, and notice dates by month or across all months.</li>
-          <li><b>Planner</b> — Add or adjust events on a calendar grid to keep renewal timelines organized.</li>
+          <li><b>Planner</b> — Add or adjust events on a calendar grid, then review upcoming dates in the list view.</li>
           <li><b>Support Page</b> — Reference color meanings, confidence guidance, and workflow tips.</li>
         </ul>
       </div>
