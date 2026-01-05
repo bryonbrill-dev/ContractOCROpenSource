@@ -171,6 +171,22 @@ CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
   ON pending_agreements(created_at);
 
 -- =========================
+-- Pending agreement reminder rules
+-- =========================
+CREATE TABLE IF NOT EXISTS pending_agreement_reminders (
+  id              TEXT PRIMARY KEY,
+  frequency       TEXT NOT NULL,
+  roles_json      TEXT NOT NULL,
+  recipients_json TEXT NOT NULL,
+  message         TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_reminders_created_at
+  ON pending_agreement_reminders(created_at);
+
+-- =========================
 -- Task queue
 -- =========================
 CREATE TABLE IF NOT EXISTS tasks (
