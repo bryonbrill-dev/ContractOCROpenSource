@@ -2230,27 +2230,37 @@ def update_reminders(event_id: str, payload: ReminderUpdate):
 # ----------------------------
 # Reminder email delivery
 # ----------------------------
+def _env_first(*keys: str) -> str:
+    for key in keys:
+        value = os.getenv(key)
+        if value:
+            cleaned = value.strip()
+            if cleaned:
+                return cleaned
+    return ""
+
+
 def _smtp_from_address() -> str:
-    from_addr = os.getenv("SMTP_FROM", "").strip()
+    from_addr = _env_first("SMTP_FROM", "SMTP_FROM_ADDRESS")
     if from_addr:
         return from_addr
-    username = os.getenv("SMTP_USERNAME", "").strip()
+    username = _env_first("SMTP_USERNAME", "SMTP_USER", "SMTP_LOGIN")
     if username:
         return username
     raise RuntimeError("SMTP_FROM or SMTP_USERNAME must be set for email delivery")
 
 
 def _send_email(recipients: List[str], subject: str, body: str) -> None:
-    host = os.getenv("SMTP_HOST", "").strip()
+    host = _env_first("SMTP_HOST", "SMTP_SERVER", "SMTP_Server")
     if not host:
         raise RuntimeError("SMTP_HOST is not configured")
 
-    port = int(os.getenv("SMTP_PORT", "587"))
-    username = os.getenv("SMTP_USERNAME", "").strip()
-    password = os.getenv("SMTP_PASSWORD", "").strip()
+    port = int(_env_first("SMTP_PORT") or "587")
+    username = _env_first("SMTP_USERNAME", "SMTP_USER", "SMTP_LOGIN")
+    password = _env_first("SMTP_PASSWORD", "SMTP_Password")
     use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     use_ssl = os.getenv("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
-    from_name = os.getenv("SMTP_FROM_NAME", "").strip()
+    from_name = _env_first("SMTP_FROM_NAME", "SMTP_SENDER_NAME")
     from_addr = _smtp_from_address()
 
     msg = EmailMessage()
@@ -2387,6 +2397,86 @@ def _send_due_reminders(reference_date: date) -> Dict[str, Any]:
     return {"sent": sent, "skipped": skipped, "errors": errors}
 
 
+def _parse_email_list(values: List[str]) -> List[str]:
+    cleaned = [str(v).strip() for v in values if str(v).strip()]
+    seen = set()
+    unique = []
+    for value in cleaned:
+        lower = value.lower()
+        if lower in seen:
+            continue
+        seen.add(lower)
+        unique.append(value)
+    return unique
+
+
+def _should_send_frequency(frequency: str, reference_date: date) -> bool:
+    frequency = (frequency or "").strip().lower()
+    if frequency == "daily":
+        return True
+    if frequency == "weekly":
+        return reference_date.weekday() == 0
+    if frequency == "monthly":
+        return reference_date.day == 1
+    return False
+
+
+def _format_pending_agreement_subject(frequency: str) -> str:
+    label = frequency.strip().lower() or "scheduled"
+    return f"Pending agreement reminder ({label})"
+
+
+def _format_pending_agreement_body(
+    message: Optional[str], agreements: List[sqlite3.Row]
+) -> str:
+    lines = []
+    if message:
+        lines.append(message.strip())
+    if message:
+        lines.append("")
+    if not agreements:
+        lines.append("No pending agreements are currently in the queue.")
+        return "\n".join(lines)
+    lines.append("Pending agreements:")
+    for agreement in agreements:
+        due_date = agreement["due_date"] or "N/A"
+        status = agreement["status"] or "Pending"
+        lines.append(
+            f"- {agreement['title']} (Owner: {agreement['owner']}, Due: {due_date}, Status: {status})"
+        )
+    return "\n".join(lines)
+
+
+def _format_pending_agreement_nudge_body(agreement: sqlite3.Row) -> str:
+    due_date = agreement["due_date"] or "N/A"
+    status = agreement["status"] or "Pending"
+    lines = [
+        "A pending agreement is ready for your review.",
+        "",
+        f"Title: {agreement['title']}",
+        f"Owner: {agreement['owner']}",
+        f"Due Date: {due_date}",
+        f"Status: {status}",
+    ]
+    return "\n".join(lines)
+
+
+def _format_task_nudge_body(task: sqlite3.Row) -> str:
+    due_date = task["due_date"] or "N/A"
+    reminders = ", ".join(safe_json_list(task["reminders_json"])) or "None"
+    description = task["description"] or "No description provided."
+    lines = [
+        "A task has been nudged for your attention.",
+        "",
+        f"Title: {task['title']}",
+        f"Due Date: {due_date}",
+        f"Reminders: {reminders}",
+        "",
+        f"Description: {description}",
+    ]
+    return "\n".join(lines)
+
+
 @app.post("/api/reminders/send")
 def send_reminders(date_str: Optional[str] = None):
     if date_str:
@@ -2395,6 +2485,105 @@ def send_reminders(date_str: Optional[str] = None):
     else:
         reference_date = date.today()
     return _send_due_reminders(reference_date)
+
+
+@app.post("/api/pending-agreement-reminders/send")
+def send_pending_agreement_reminders(date_str: Optional[str] = None):
+    if date_str:
+        target_date = _normalize_date_string(date_str)
+        reference_date = date.fromisoformat(target_date)
+    else:
+        reference_date = date.today()
+
+    sent = 0
+    skipped = 0
+    errors: List[Dict[str, str]] = []
+
+    with db() as conn:
+        reminders = conn.execute(
+            """
+            SELECT id, frequency, roles_json, recipients_json, message
+            FROM pending_agreement_reminders
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+        agreements = conn.execute(
+            """
+            SELECT id, title, owner, due_date, status, created_at
+            FROM pending_agreements
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+
+        for reminder in reminders:
+            if not _should_send_frequency(reminder["frequency"], reference_date):
+                skipped += 1
+                continue
+            recipients = _parse_email_list(safe_json_list(reminder["recipients_json"]))
+            if not recipients:
+                skipped += 1
+                continue
+
+            subject = _format_pending_agreement_subject(reminder["frequency"])
+            body = _format_pending_agreement_body(reminder["message"], agreements)
+            try:
+                _send_email(recipients, subject, body)
+                sent += 1
+            except Exception as exc:
+                errors.append(
+                    {
+                        "reminder_id": reminder["id"],
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+
+    return {"sent": sent, "skipped": skipped, "errors": errors}
+
+
+@app.post("/api/pending-agreements/{agreement_id}/nudge")
+def nudge_pending_agreement(agreement_id: str):
+    with db() as conn:
+        agreement = conn.execute(
+            """
+            SELECT id, title, owner, due_date, status, created_at
+            FROM pending_agreements WHERE id = ?
+            """,
+            (agreement_id,),
+        ).fetchone()
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+
+    recipient = agreement["owner"].strip()
+    if not recipient:
+        raise HTTPException(status_code=400, detail="Pending agreement owner is missing")
+
+    subject = f"Pending agreement nudge: {agreement['title']}"
+    body = _format_pending_agreement_nudge_body(agreement)
+    _send_email([recipient], subject, body)
+    return {"nudge": "sent", "agreement_id": agreement_id, "recipients": [recipient]}
+
+
+@app.post("/api/tasks/{task_id}/nudge")
+def nudge_task(task_id: str):
+    with db() as conn:
+        task = conn.execute(
+            """
+            SELECT id, title, description, due_date, reminders_json, assignees_json, completed, created_at
+            FROM tasks WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+    assignees = _parse_email_list(safe_json_list(task["assignees_json"]))
+    if not assignees:
+        raise HTTPException(status_code=400, detail="Task has no assignees to nudge")
+
+    subject = f"Task nudge: {task['title']}"
+    body = _format_task_nudge_body(task)
+    _send_email(assignees, subject, body)
+    return {"nudge": "sent", "task_id": task_id, "recipients": assignees}
 
 # ----------------------------
 # In-app bell notifications

@@ -449,6 +449,13 @@ async function deletePendingAgreement(agreementId) {
   await apiFetch(`/api/pending-agreements/${agreementId}`, { method: "DELETE" });
 }
 
+async function nudgePendingAgreement(agreementId) {
+  const res = await apiFetch(`/api/pending-agreements/${agreementId}/nudge`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
 async function fetchTasks({ limit = 20, offset = 0, query = "" } = {}) {
   const params = new URLSearchParams();
   params.set("limit", limit);
@@ -473,6 +480,11 @@ async function updateTaskStatus(taskId, completed) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ completed }),
   });
+  return res.json();
+}
+
+async function nudgeTask(taskId) {
+  const res = await apiFetch(`/api/tasks/${taskId}/nudge`, { method: "POST" });
   return res.json();
 }
 
@@ -2028,10 +2040,15 @@ function renderPendingAgreementsQueue() {
     btn.addEventListener("click", async () => {
       const agreement = state.pendingAgreements.find((item) => item.id === btn.dataset.nudgeAgreement);
       if (!agreement) return;
-      await showAlert(
-        `A nudge email would be sent for "${agreement.title}" to ${agreement.owner}.`,
-        { title: "Nudge queued" },
-      );
+      try {
+        const response = await nudgePendingAgreement(agreement.id);
+        const recipients = response.recipients?.join(", ") || agreement.owner;
+        await showAlert(`Nudge email sent for "${agreement.title}" to ${recipients}.`, {
+          title: "Nudge sent",
+        });
+      } catch (err) {
+        await showAlert(`Unable to send nudge. ${err.message}`, { title: "Nudge failed" });
+      }
     });
   });
 
@@ -2101,7 +2118,15 @@ function renderTaskTable() {
     btn.addEventListener("click", async () => {
       const task = state.tasks.find((item) => item.id === btn.dataset.taskNudge);
       if (!task) return;
-      await showAlert(`A one-time nudge would be sent for "${task.title}".`, { title: "Nudge queued" });
+      try {
+        const response = await nudgeTask(task.id);
+        const recipients = response.recipients?.join(", ") || "assigned users";
+        await showAlert(`Nudge email sent for "${task.title}" to ${recipients}.`, {
+          title: "Nudge sent",
+        });
+      } catch (err) {
+        await showAlert(`Unable to send nudge. ${err.message}`, { title: "Nudge failed" });
+      }
     });
   });
 
