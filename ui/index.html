@@ -118,6 +118,14 @@
     .manual-term > summary { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px; }
     .event-date-group { background: #f8fafc; }
     .event-date-body { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+    .tour-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 2000; }
+    .tour-tooltip { position: absolute; max-width: 340px; background: #ffffff; color: #0f172a; border-radius: 12px; border: 1px solid #e2e8f0; padding: 14px; box-shadow: 0 12px 28px rgba(15, 23, 42, 0.2); font-size: 13px; }
+    .tour-step-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; font-weight: 700; }
+    .tour-title { font-weight: 700; margin-top: 6px; }
+    .tour-body { margin-top: 6px; color: #334155; line-height: 1.4; }
+    .tour-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
+    .tour-actions button { flex: 1; }
+    .tour-highlight { position: relative; z-index: 2101; outline: 3px solid #f28c28; outline-offset: 4px; border-radius: 8px; box-shadow: 0 0 0 4px rgba(242, 140, 40, 0.2); }
     .event-contract-body { margin-top: 6px; border-left: 3px solid #c7d2fe; padding-left: 10px; }
     .danger { background: #dc2626; border-color: #dc2626; }
     .danger:hover { background: #b91c1c; border-color: #b91c1c; }
@@ -460,6 +468,7 @@
           <h3 style="margin:0">Pending Agreements</h3>
           <div class="muted small">Configure reminder schedules and nudge approvers for pending agreements.</div>
         </div>
+        <button id="pendingAgreementsGuide" type="button">Guided walkthrough</button>
       </div>
 
       <div class="section" style="margin-top:12px;">
@@ -529,6 +538,7 @@
               <input id="pendingAgreementsSearch" placeholder="Search queue" />
               <button id="pendingAgreementsSearchButton" type="button">Search</button>
               <button id="pendingAgreementsSearchClear" type="button">Clear</button>
+              <button id="pendingAgreementsAdd" type="button">Add agreement</button>
               <button id="pendingAgreementsQueueExpand" type="button" aria-pressed="false">Expand</button>
             </div>
           </div>
@@ -574,6 +584,7 @@
           <h3 style="margin:0">Tasks</h3>
           <div class="muted small">Create task assignments, configure reminders, and send nudges.</div>
         </div>
+        <button id="tasksGuide" type="button">Guided walkthrough</button>
       </div>
 
       <div class="row wrap" style="margin-top:12px;">
@@ -747,6 +758,38 @@
         </p>
       </div>
       <div class="section">
+        <h4>Pending agreements & tasks quick steps</h4>
+        <div class="small" style="color:#374151;">
+          <p style="margin:0 0 6px 0;"><b>Pending Agreement Reminders</b></p>
+          <ol style="margin:0 0 10px 18px;">
+            <li>Add notification recipients in the Pending Agreements page if they are not listed yet.</li>
+            <li>Select a frequency, choose roles and/or individual recipients, and enter a reminder message.</li>
+            <li>Click <b>Save Reminder Rule</b> and confirm the rule appears in the reminder table.</li>
+          </ol>
+          <p style="margin:0 0 6px 0;"><b>Pending Agreements Queue</b></p>
+          <ol style="margin:0 0 10px 18px;">
+            <li>Click <b>Add agreement</b> to create a pending approval entry.</li>
+            <li>Fill in the agreement title, owner, due date, and status, then save.</li>
+            <li>Use search or the action buttons to nudge, edit, or remove pending approvals.</li>
+          </ol>
+          <p style="margin:0 0 6px 0;"><b>Tasks Queue</b></p>
+          <ol style="margin:0 0 0 18px;">
+            <li>Add users to the Task user directory so they can be assigned.</li>
+            <li>Enter a task title, description, due date, recurrence, and reminder offsets.</li>
+            <li>Select assignees and click <b>Create Task</b> to populate the queue.</li>
+          </ol>
+        </div>
+      </div>
+      <div class="section">
+        <h4>SMTP placeholders</h4>
+        <p class="muted small">
+          Replace the placeholders below when configuring SMTP for nudge and reminder emails.
+        </p>
+        <pre class="small">SMTP_HOST=smtp.sendgrid.net
+SMTP_USERNAME=ATLASSMTPUSER
+SMTP_PASSWORD=ATLASPASSWORD</pre>
+      </div>
+      <div class="section">
         <h4>Page guide</h4>
         <p class="muted small">
           Use this quick guide to understand what each area of the app is for and how to navigate it.
@@ -812,7 +855,7 @@
       <div class="flex items-start justify-between gap-4">
         <div>
           <h3 id="pendingAgreementModalTitle" class="text-lg font-semibold text-slate-900">Edit pending agreement</h3>
-          <p class="mt-2 text-sm text-slate-600">Update the details for this approval item.</p>
+          <p id="pendingAgreementModalDescription" class="mt-2 text-sm text-slate-600">Update the details for this approval item.</p>
         </div>
         <button id="pendingAgreementEditClose" class="text-xl text-slate-400 hover:text-slate-600" aria-label="Close dialog">×</button>
       </div>
@@ -837,6 +880,19 @@
       <div class="mt-6 flex flex-wrap justify-end gap-3">
         <button id="pendingAgreementEditCancel" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
         <button id="pendingAgreementEditSave" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tourOverlay" class="hidden tour-overlay" aria-hidden="true">
+    <div id="tourTooltip" class="tour-tooltip" role="dialog" aria-live="polite">
+      <div id="tourStepLabel" class="tour-step-label">Step 1 of 5</div>
+      <div id="tourTitle" class="tour-title"></div>
+      <div id="tourBody" class="tour-body"></div>
+      <div class="tour-actions">
+        <button id="tourBack" type="button">Back</button>
+        <button id="tourNext" type="button">Next</button>
+        <button id="tourClose" type="button">End tour</button>
       </div>
     </div>
   </div>

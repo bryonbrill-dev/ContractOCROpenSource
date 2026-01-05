@@ -43,6 +43,7 @@ const STANDARD_EVENT_TYPES = ["renewal", "termination", "effective", "auto_opt_o
 const modalState = { resolver: null, showCancel: false };
 const pendingReminderModalState = { reminderId: null };
 const pendingAgreementModalState = { agreementId: null };
+const tourState = { steps: [], index: 0, active: false, currentTarget: null };
 
 function getModalElements() {
   return {
@@ -172,6 +173,7 @@ function getPendingAgreementModalElements() {
   return {
     overlay: $("pendingAgreementModal"),
     title: $("pendingAgreementModalTitle"),
+    description: $("pendingAgreementModalDescription"),
     name: $("pendingAgreementEditTitle"),
     owner: $("pendingAgreementEditOwner"),
     dueDate: $("pendingAgreementEditDueDate"),
@@ -190,14 +192,38 @@ function toInputDate(value) {
 }
 
 function openPendingAgreementModal(agreement) {
-  const { overlay, title, name, owner, dueDate, status } = getPendingAgreementModalElements();
-  if (!overlay || !title || !name || !owner || !dueDate || !status) return;
+  const { overlay, title, description, name, owner, dueDate, status, save } =
+    getPendingAgreementModalElements();
+  if (!overlay || !title || !name || !owner || !dueDate || !status || !save) return;
   pendingAgreementModalState.agreementId = agreement.id;
   title.textContent = "Edit pending agreement";
+  if (description) {
+    description.textContent = "Update the details for this approval item.";
+  }
+  save.textContent = "Save changes";
   name.value = agreement.title || "";
   owner.value = agreement.owner || "";
   dueDate.value = toInputDate(agreement.due_date || agreement.dueDate);
   status.value = agreement.status || "";
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  name.focus();
+}
+
+function openPendingAgreementCreateModal() {
+  const { overlay, title, description, name, owner, dueDate, status, save } =
+    getPendingAgreementModalElements();
+  if (!overlay || !title || !name || !owner || !dueDate || !status || !save) return;
+  pendingAgreementModalState.agreementId = null;
+  title.textContent = "Add pending agreement";
+  if (description) {
+    description.textContent = "Create a new approval item for the pending queue.";
+  }
+  save.textContent = "Add agreement";
+  name.value = "";
+  owner.value = "";
+  dueDate.value = "";
+  status.value = "";
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
   name.focus();
@@ -404,6 +430,15 @@ async function fetchPendingAgreements({ limit = 20, offset = 0, query = "" } = {
 async function updatePendingAgreement(agreementId, payload) {
   const res = await apiFetch(`/api/pending-agreements/${agreementId}`, {
     method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function createPendingAgreement(payload) {
+  const res = await apiFetch("/api/pending-agreements", {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
@@ -2141,7 +2176,6 @@ function initPendingAgreementsUi() {
   });
   agreementModal.save?.addEventListener("click", async () => {
     const agreementId = pendingAgreementModalState.agreementId;
-    if (!agreementId) return;
     const title = agreementModal.name?.value?.trim() || "";
     const owner = agreementModal.owner?.value?.trim() || "";
     const dueDate = agreementModal.dueDate?.value ?? "";
@@ -2153,23 +2187,36 @@ function initPendingAgreementsUi() {
     }
 
     try {
-      const updated = await updatePendingAgreement(agreementId, {
-        title,
-        owner,
-        due_date: dueDate,
-        status,
-      });
-      state.pendingAgreements = state.pendingAgreements.map((entry) =>
-        entry.id === agreementId ? updated : entry,
-      );
-      renderPendingAgreementsQueue();
+      if (agreementId) {
+        const updated = await updatePendingAgreement(agreementId, {
+          title,
+          owner,
+          due_date: dueDate,
+          status,
+        });
+        state.pendingAgreements = state.pendingAgreements.map((entry) =>
+          entry.id === agreementId ? updated : entry,
+        );
+        renderPendingAgreementsQueue();
+        await showAlert("Pending agreement updated.", { title: "Changes saved" });
+      } else {
+        await createPendingAgreement({
+          title,
+          owner,
+          due_date: dueDate,
+          status,
+        });
+        await loadPendingAgreements({ reset: true });
+        await showAlert("Pending agreement added to the queue.", { title: "Added" });
+      }
       closePendingAgreementModal();
-      await showAlert("Pending agreement updated.", { title: "Changes saved" });
     } catch (err) {
-      await showAlert(`Unable to update pending agreement. ${err.message}`, { title: "Save failed" });
+      const action = agreementId ? "update" : "add";
+      await showAlert(`Unable to ${action} pending agreement. ${err.message}`, { title: "Save failed" });
     }
   });
 
+  $("pendingAgreementsAdd")?.addEventListener("click", () => openPendingAgreementCreateModal());
   $("pendingAgreementsQueueExpand")?.addEventListener("click", () => toggleQueueExpanded("pendingAgreements"));
   $("pendingAgreementsLoadMore")?.addEventListener("click", async () => {
     await loadPendingAgreements();
@@ -2345,6 +2392,7 @@ function initTasksUi() {
 
 function showPage(page) {
   const pages = ["contracts", "allContracts", "planner", "pendingAgreements", "tasks", "outputs"];
+  closeTour();
   state.currentPage = page;
   pages.forEach((p) => {
     $(p + "Page")?.classList.toggle("hidden", p !== page);
@@ -2360,6 +2408,189 @@ function showPage(page) {
       loadEvents();
     }
   }
+}
+
+function getTourElements() {
+  return {
+    overlay: $("tourOverlay"),
+    tooltip: $("tourTooltip"),
+    stepLabel: $("tourStepLabel"),
+    title: $("tourTitle"),
+    body: $("tourBody"),
+    back: $("tourBack"),
+    next: $("tourNext"),
+    close: $("tourClose"),
+  };
+}
+
+function closeTour() {
+  if (!tourState.active) return;
+  const { overlay } = getTourElements();
+  if (overlay) {
+    overlay.classList.add("hidden");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+  if (tourState.currentTarget) {
+    tourState.currentTarget.classList.remove("tour-highlight");
+  }
+  tourState.active = false;
+  tourState.steps = [];
+  tourState.index = 0;
+  tourState.currentTarget = null;
+}
+
+function positionTourTooltip(target, tooltip) {
+  if (!target || !tooltip) return;
+  const rect = target.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const spacing = 12;
+  let top = rect.bottom + spacing;
+  if (top + tooltipRect.height > window.innerHeight - spacing) {
+    top = rect.top - tooltipRect.height - spacing;
+  }
+  top = Math.max(spacing, Math.min(top, window.innerHeight - tooltipRect.height - spacing));
+  let left = rect.left;
+  if (left + tooltipRect.width > window.innerWidth - spacing) {
+    left = window.innerWidth - tooltipRect.width - spacing;
+  }
+  left = Math.max(spacing, left);
+  tooltip.style.top = `${top + window.scrollY}px`;
+  tooltip.style.left = `${left + window.scrollX}px`;
+}
+
+function renderTourStep() {
+  const { overlay, tooltip, stepLabel, title, body, back, next, close } = getTourElements();
+  if (!overlay || !tooltip || !stepLabel || !title || !body || !back || !next || !close) return;
+  const step = tourState.steps[tourState.index];
+  if (!step) {
+    closeTour();
+    return;
+  }
+  if (tourState.currentTarget) {
+    tourState.currentTarget.classList.remove("tour-highlight");
+  }
+  const target = $(step.targetId);
+  if (!target) {
+    closeTour();
+    return;
+  }
+  tourState.currentTarget = target;
+  target.classList.add("tour-highlight");
+  stepLabel.textContent = `Step ${tourState.index + 1} of ${tourState.steps.length}`;
+  title.textContent = step.title;
+  body.textContent = step.body;
+  back.disabled = tourState.index === 0;
+  next.textContent = tourState.index === tourState.steps.length - 1 ? "Finish" : "Next";
+  close.textContent = "End tour";
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  requestAnimationFrame(() => {
+    positionTourTooltip(target, tooltip);
+  });
+}
+
+function startTour(steps) {
+  const filtered = steps.filter((step) => $(step.targetId));
+  if (!filtered.length) {
+    showAlert("No steps were found for this tour.", { title: "Tour unavailable" });
+    return;
+  }
+  tourState.steps = filtered;
+  tourState.index = 0;
+  tourState.active = true;
+  const { overlay } = getTourElements();
+  if (overlay) {
+    overlay.classList.remove("hidden");
+    overlay.setAttribute("aria-hidden", "false");
+  }
+  renderTourStep();
+}
+
+function initGuidedTours() {
+  const { overlay, back, next, close } = getTourElements();
+  if (!overlay || !back || !next || !close) return;
+
+  const pendingAgreementsSteps = [
+    {
+      targetId: "pendingUserAdd",
+      title: "Add notification recipients",
+      body: "Add names and emails so reminders and nudges have recipients to target.",
+    },
+    {
+      targetId: "pendingReminderFrequency",
+      title: "Set reminder cadence",
+      body: "Choose daily, weekly, or monthly reminders for pending approvals.",
+    },
+    {
+      targetId: "pendingReminderSave",
+      title: "Save the reminder rule",
+      body: "Save the rule so it appears in the reminders table for quick edits.",
+    },
+    {
+      targetId: "pendingAgreementsAdd",
+      title: "Add a pending agreement",
+      body: "Create a pending approval item to populate the queue.",
+    },
+    {
+      targetId: "pendingAgreementsQueueCard",
+      title: "Manage the queue",
+      body: "Search, nudge, edit, or remove pending agreements from this list.",
+    },
+  ];
+
+  const taskSteps = [
+    {
+      targetId: "taskUserAdd",
+      title: "Add task assignees",
+      body: "Add users so tasks can be assigned and nudged.",
+    },
+    {
+      targetId: "taskTitle",
+      title: "Describe the task",
+      body: "Provide a clear title (and optional description) for the assignment.",
+    },
+    {
+      targetId: "taskReminderOptions",
+      title: "Pick reminder offsets",
+      body: "Select when reminders should go out relative to the due date.",
+    },
+    {
+      targetId: "taskAssigneeOptions",
+      title: "Choose assignees",
+      body: "Select the users who should receive the task and nudges.",
+    },
+    {
+      targetId: "taskCreate",
+      title: "Create the task",
+      body: "Click Create Task to push it into the task queue.",
+    },
+  ];
+
+  $("pendingAgreementsGuide")?.addEventListener("click", () => startTour(pendingAgreementsSteps));
+  $("tasksGuide")?.addEventListener("click", () => startTour(taskSteps));
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      closeTour();
+    }
+  });
+  back.addEventListener("click", () => {
+    tourState.index = Math.max(0, tourState.index - 1);
+    renderTourStep();
+  });
+  next.addEventListener("click", () => {
+    if (tourState.index >= tourState.steps.length - 1) {
+      closeTour();
+      return;
+    }
+    tourState.index += 1;
+    renderTourStep();
+  });
+  close.addEventListener("click", closeTour);
+  window.addEventListener("resize", () => {
+    if (tourState.active) {
+      renderTourStep();
+    }
+  });
 }
 
 function initEventsUi() {
@@ -2658,6 +2889,7 @@ initTasksUi();
 initAllContractsUi();
 initThemeToggle();
 initPreviewFullscreen();
+initGuidedTours();
 showPage("contracts");
 
 testApi()
