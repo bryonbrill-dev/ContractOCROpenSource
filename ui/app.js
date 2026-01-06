@@ -15,6 +15,7 @@ const state = {
   currentPage: "contracts",
   selectedContractId: null,
   previewFullscreen: false,
+  previewMode: "split",
   notificationUsers: [],
   pendingAgreementReminders: [],
   pendingAgreements: [],
@@ -398,6 +399,19 @@ function setPreviewFullscreen(isActive) {
     toggle.textContent = isActive ? "Exit full screen" : "Expand";
     toggle.setAttribute("aria-pressed", String(isActive));
   }
+}
+
+function setPreviewMode(mode) {
+  const allowed = ["split", "pdf", "ocr"];
+  const next = allowed.includes(mode) ? mode : "split";
+  state.previewMode = next;
+  document.body.classList.remove("preview-mode-split", "preview-mode-pdf", "preview-mode-ocr");
+  document.body.classList.add(`preview-mode-${next}`);
+  document.querySelectorAll("[data-preview-mode]").forEach((btn) => {
+    const isActive = btn.dataset.previewMode === next;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-pressed", String(isActive));
+  });
 }
 
 function setQueueExpanded(queueKey, isExpanded) {
@@ -1104,8 +1118,6 @@ function renderContractDetail(data) {
         <button id="deleteContract" class="danger">Delete</button>
       `;
 
-  setPreviewFullscreen(false);
-
   $("detail").innerHTML = `
     <div><b>${c.title || c.original_filename || c.id}</b></div>
     <div class="small muted">ID: ${c.id}</div>
@@ -1131,17 +1143,28 @@ function renderContractDetail(data) {
         <span class="summary-title">Content Preview</span>
         <span class="summary-meta">
           PDF or OCR text
+          <span class="inline" style="gap:6px;">
+            <button class="link-button preview-mode-toggle" type="button" data-preview-mode="split" aria-pressed="true">
+              Split
+            </button>
+            <button class="link-button preview-mode-toggle" type="button" data-preview-mode="pdf" aria-pressed="false">
+              PDF
+            </button>
+            <button class="link-button preview-mode-toggle" type="button" data-preview-mode="ocr" aria-pressed="false">
+              OCR
+            </button>
+          </span>
           <button id="togglePreviewFullscreen" class="link-button" type="button" aria-pressed="false">
             Expand
           </button>
         </span>
       </summary>
       <div class="preview-grid">
-        <div>
+        <div class="preview-panel preview-panel-pdf">
           <div class="small muted" style="margin-bottom:6px;">Document preview</div>
           ${previewHtml}
         </div>
-        <div>
+        <div class="preview-panel preview-panel-ocr">
           <div class="small muted" style="margin-bottom:6px;">OCR text</div>
           <pre id="contractText" class="contract-text">Open to load text…</pre>
         </div>
@@ -1225,6 +1248,16 @@ function renderContractDetail(data) {
     event.stopPropagation();
     setPreviewFullscreen(!state.previewFullscreen);
   });
+
+  document.querySelectorAll(".preview-mode-toggle").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setPreviewMode(btn.dataset.previewMode);
+    });
+  });
+
+  setPreviewMode(state.previewMode);
+  setPreviewFullscreen(state.previewFullscreen);
 
   $("saveContractMeta")?.addEventListener("click", async () => {
     try {
@@ -1551,6 +1584,7 @@ async function loadDetail(id) {
   detail.innerHTML = "Loading…";
   state.selectedContractId = id;
   updateSelectedRows();
+  setPreviewFullscreen(true);
   try {
     if (!state.definitions.length || !state.tags.length || !state.agreementTypes.length) {
       await loadReferenceData();

@@ -94,6 +94,11 @@
     .preview-fullscreen #contractContent .preview-grid { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
     .preview-fullscreen .preview-pane,
     .preview-fullscreen .contract-text { height: calc(100vh - 220px); min-height: 0; }
+    .preview-mode-toggle.active { text-decoration: underline; }
+    .preview-mode-pdf .preview-panel-ocr,
+    .preview-mode-ocr .preview-panel-pdf { display: none; }
+    .preview-mode-pdf .preview-grid,
+    .preview-mode-ocr .preview-grid { grid-template-columns: minmax(0, 1fr); }
     .expired-bell { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 10px; font-weight: 700; }
     .planner-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: visible; background: #e5e7eb; }
     .planner-cell { background: #ffffff; min-height: 110px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
