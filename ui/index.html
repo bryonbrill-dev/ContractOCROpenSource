@@ -756,6 +756,25 @@
         <p class="muted small" style="margin-top:6px;">
           After saving, the reminder status in the event list will show the configured offsets and recipients.
         </p>
+        <p class="muted small" style="margin-top:6px;">
+          Event reminder emails include contract details (including the event type and contract status). Set
+          <code>APP_BASE_URL</code> (or <code>PUBLIC_APP_URL</code>) so emails include a direct link back to ContractOCR and the
+          contract PDF.
+        </p>
+      </div>
+      <div class="section">
+        <h4>Weekly contract reminder (7-day lookahead)</h4>
+        <ol class="small" style="margin:8px 0 0 18px;">
+          <li>Open <b>Contracts</b> and select the contract you want to track.</li>
+          <li>In <b>Contract Detail → Events</b>, add or confirm a renewal, termination, or notice event date.</li>
+          <li>Enter recipient emails in the <b>Emails</b> field using comma-separated addresses.</li>
+          <li>Set the <b>Offsets</b> field to <b>7</b> so the reminder sends one week before the event.</li>
+          <li>Save the event reminder and verify the offsets appear in the Events list.</li>
+        </ol>
+        <p class="muted small" style="margin-top:6px;">
+          To send a weekly summary for upcoming contracts, repeat this pattern for the renewal or termination dates that need
+          a 7-day heads-up.
+        </p>
       </div>
       <div class="section">
         <h4>Pending agreements & tasks quick steps</h4>
@@ -766,6 +785,10 @@
             <li>Select a frequency, choose roles and/or individual recipients, and enter a reminder message.</li>
             <li>Click <b>Save Reminder Rule</b> and confirm the rule appears in the reminder table.</li>
           </ol>
+          <p style="margin:0 0 10px 0;">
+            Tip: Notification recipients are stored in the user directory so you can reuse them across reminders without
+            retyping emails. Add multiple recipients by selecting more than one user.
+          </p>
           <p style="margin:0 0 6px 0;"><b>Pending Agreements Queue</b></p>
           <ol style="margin:0 0 10px 18px;">
             <li>Click <b>Add agreement</b> to create a pending approval entry.</li>
@@ -787,7 +810,8 @@
         </p>
         <pre class="small">SMTP_HOST=smtp.sendgrid.net
 SMTP_USERNAME=ATLASSMTPUSER
-SMTP_PASSWORD=ATLASPASSWORD</pre>
+SMTP_PASSWORD=ATLASPASSWORD
+APP_BASE_URL=https://contracts.yourcompany.com</pre>
       </div>
       <div class="section">
         <h4>Page guide</h4>
