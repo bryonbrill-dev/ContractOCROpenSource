@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL,
   owner         TEXT NOT NULL,
+  owner_email   TEXT,
+  contract_id   TEXT,
   due_date      TEXT,
   status        TEXT,
   created_at    TEXT NOT NULL
@@ -189,6 +191,8 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
 
 CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
   ON pending_agreements(created_at);
+CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id
+  ON pending_agreements(contract_id);
 
 -- =========================
 -- Pending agreement reminder rules

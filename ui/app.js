@@ -187,8 +187,13 @@ function getPendingAgreementModalElements() {
     description: $("pendingAgreementModalDescription"),
     name: $("pendingAgreementEditTitle"),
     owner: $("pendingAgreementEditOwner"),
+    ownerEmail: $("pendingAgreementEditOwnerEmail"),
     dueDate: $("pendingAgreementEditDueDate"),
     status: $("pendingAgreementEditStatus"),
+    contractInput: $("pendingAgreementContractSearch"),
+    contractList: $("pendingAgreementContractList"),
+    contractMeta: $("pendingAgreementContractMeta"),
+    ownerEmailList: $("pendingAgreementOwnerEmails"),
     cancel: $("pendingAgreementEditCancel"),
     close: $("pendingAgreementEditClose"),
     save: $("pendingAgreementEditSave"),
@@ -202,10 +207,78 @@ function toInputDate(value) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function renderPendingAgreementOwnerEmails() {
+  const { ownerEmailList } = getPendingAgreementModalElements();
+  if (!ownerEmailList) return;
+  ownerEmailList.innerHTML = state.notificationUsers
+    .map((user) => `<option value="${escapeHtml(user.email)}"></option>`)
+    .join("");
+}
+
+function renderPendingAgreementContractOptions() {
+  const { contractList } = getPendingAgreementModalElements();
+  if (!contractList) return;
+  contractList.innerHTML = state.contracts
+    .map((contract) => `<option value="${escapeHtml(contractOptionLabel(contract))}"></option>`)
+    .join("");
+}
+
+async function ensurePendingAgreementContractsLoaded() {
+  if (!state.contracts.length) {
+    await loadContractsList();
+  }
+  renderPendingAgreementContractOptions();
+}
+
+function updatePendingAgreementContractMeta(contract) {
+  const { contractMeta } = getPendingAgreementModalElements();
+  if (!contractMeta) return;
+  if (!contract) {
+    contractMeta.textContent = "No contract linked.";
+    return;
+  }
+  const link = `${getApiBase()}/api/contracts/${contract.id}/download`;
+  contractMeta.innerHTML = `Linked: ${escapeHtml(contractOptionLabel(contract))} · <a href="${link}" target="_blank" rel="noopener">View contract</a>`;
+}
+
+function selectPendingAgreementContract(contract) {
+  const { contractInput } = getPendingAgreementModalElements();
+  if (!contractInput) return;
+  if (contract) {
+    contractInput.value = contractOptionLabel(contract);
+    contractInput.dataset.contractId = contract.id;
+  } else {
+    contractInput.value = "";
+    contractInput.dataset.contractId = "";
+  }
+  updatePendingAgreementContractMeta(contract || null);
+}
+
+function resolveContractByLabel(label) {
+  const trimmed = (label || "").trim();
+  if (!trimmed) return null;
+  return state.contracts.find((contract) => contractOptionLabel(contract) === trimmed) || null;
+}
+
 function openPendingAgreementModal(agreement) {
-  const { overlay, title, description, name, owner, dueDate, status, save } =
+  const {
+    overlay,
+    title,
+    description,
+    name,
+    owner,
+    ownerEmail,
+    dueDate,
+    status,
+    save,
+    contractInput,
+  } =
     getPendingAgreementModalElements();
-  if (!overlay || !title || !name || !owner || !dueDate || !status || !save) return;
+  if (!overlay || !title || !name || !owner || !ownerEmail || !dueDate || !status || !save || !contractInput) {
+    return;
+  }
+  ensurePendingAgreementContractsLoaded().catch(() => {});
+  renderPendingAgreementOwnerEmails();
   pendingAgreementModalState.agreementId = agreement.id;
   title.textContent = "Edit pending agreement";
   if (description) {
@@ -214,17 +287,49 @@ function openPendingAgreementModal(agreement) {
   save.textContent = "Save changes";
   name.value = agreement.title || "";
   owner.value = agreement.owner || "";
+  ownerEmail.value = agreement.owner_email || "";
   dueDate.value = toInputDate(agreement.due_date || agreement.dueDate);
   status.value = agreement.status || "";
+  contractInput.dataset.contractId = agreement.contract_id || "";
+  const contractLabel = agreement.contract_title
+    ? `${agreement.contract_title}${agreement.contract_vendor ? ` — ${agreement.contract_vendor}` : ""}`
+    : "";
+  contractInput.value = contractLabel;
+  if (!contractLabel && agreement.contract_id) {
+    const match = state.contracts.find((contract) => contract.id === agreement.contract_id);
+    if (match) {
+      contractInput.value = contractOptionLabel(match);
+    }
+  }
+  updatePendingAgreementContractMeta(
+    agreement.contract_id
+      ? { id: agreement.contract_id, title: agreement.contract_title, vendor: agreement.contract_vendor }
+      : null,
+  );
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
   name.focus();
 }
 
 function openPendingAgreementCreateModal() {
-  const { overlay, title, description, name, owner, dueDate, status, save } =
+  const {
+    overlay,
+    title,
+    description,
+    name,
+    owner,
+    ownerEmail,
+    dueDate,
+    status,
+    save,
+    contractInput,
+  } =
     getPendingAgreementModalElements();
-  if (!overlay || !title || !name || !owner || !dueDate || !status || !save) return;
+  if (!overlay || !title || !name || !owner || !ownerEmail || !dueDate || !status || !save || !contractInput) {
+    return;
+  }
+  ensurePendingAgreementContractsLoaded().catch(() => {});
+  renderPendingAgreementOwnerEmails();
   pendingAgreementModalState.agreementId = null;
   title.textContent = "Add pending agreement";
   if (description) {
@@ -233,8 +338,12 @@ function openPendingAgreementCreateModal() {
   save.textContent = "Add agreement";
   name.value = "";
   owner.value = "";
+  ownerEmail.value = "";
   dueDate.value = "";
   status.value = "";
+  contractInput.value = "";
+  contractInput.dataset.contractId = "";
+  updatePendingAgreementContractMeta(null);
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
   name.focus();
@@ -473,6 +582,15 @@ async function deletePendingAgreement(agreementId) {
 async function nudgePendingAgreement(agreementId) {
   const res = await apiFetch(`/api/pending-agreements/${agreementId}/nudge`, {
     method: "POST",
+  });
+  return res.json();
+}
+
+async function actionPendingAgreement(agreementId, action) {
+  const res = await apiFetch(`/api/pending-agreements/${agreementId}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
   });
   return res.json();
 }
@@ -1874,7 +1992,7 @@ function updatePendingAgreementsMeta() {
 async function loadPendingAgreements({ reset = false } = {}) {
   const table = $("pendingAgreementsTable");
   if (reset && table) {
-    table.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
+    table.innerHTML = `<tr><td colspan="7" class="muted">Loading…</td></tr>`;
   }
   try {
     const offset = reset ? 0 : state.pendingAgreementsOffset;
@@ -1895,7 +2013,7 @@ async function loadPendingAgreements({ reset = false } = {}) {
     renderPendingAgreementsQueue();
   } catch (err) {
     if (table) {
-      table.innerHTML = `<tr><td colspan="6" class="muted">Unable to load pending agreements. ${err.message}</td></tr>`;
+      table.innerHTML = `<tr><td colspan="7" class="muted">Unable to load pending agreements. ${err.message}</td></tr>`;
     }
     state.pendingAgreementsHasMore = false;
   } finally {
@@ -2035,20 +2153,39 @@ function renderPendingAgreementsQueue() {
   const table = $("pendingAgreementsTable");
   if (!table) return;
   if (!state.pendingAgreements.length) {
-    table.innerHTML = `<tr><td colspan="6" class="muted">No pending agreements right now.</td></tr>`;
+    table.innerHTML = `<tr><td colspan="7" class="muted">No pending agreements right now.</td></tr>`;
     return;
   }
+  const formatOwner = (agreement) => {
+    if (agreement.owner_email) {
+      return `${agreement.owner} (${agreement.owner_email})`;
+    }
+    return agreement.owner;
+  };
+  const formatContract = (agreement) => {
+    if (!agreement.contract_id) {
+      return `<span class="muted small">Unlinked</span>`;
+    }
+    const label = agreement.contract_title
+      ? `${agreement.contract_title}${agreement.contract_vendor ? ` — ${agreement.contract_vendor}` : ""}`
+      : agreement.contract_id;
+    const link = `${getApiBase()}/api/contracts/${agreement.contract_id}/download`;
+    return `<div>${escapeHtml(label)}</div><a class="muted small" href="${link}" target="_blank" rel="noopener">View contract</a>`;
+  };
   table.innerHTML = state.pendingAgreements
     .map(
       (agreement) => `
         <tr>
           <td>${escapeHtml(agreement.title)}</td>
-          <td>${escapeHtml(agreement.owner)}</td>
+          <td>${formatContract(agreement)}</td>
+          <td>${escapeHtml(formatOwner(agreement))}</td>
           <td>${escapeHtml(formatDate(agreement.due_date || agreement.dueDate))}</td>
           <td>${escapeHtml(agreement.status || "")}</td>
           <td>${escapeHtml(formatDate(agreement.created_at))}</td>
           <td>
             <button data-nudge-agreement="${agreement.id}">Nudge</button>
+            <button data-approve-agreement="${agreement.id}">Approve</button>
+            <button data-deny-agreement="${agreement.id}">Deny</button>
             <button data-edit-agreement="${agreement.id}">Edit</button>
             <button data-remove-agreement="${agreement.id}">Remove</button>
           </td>
@@ -2095,6 +2232,56 @@ function renderPendingAgreementsQueue() {
         await loadPendingAgreements({ reset: true });
       } catch (err) {
         await showAlert(`Unable to remove pending agreement. ${err.message}`, { title: "Remove failed" });
+      }
+    });
+  });
+
+  table.querySelectorAll("button[data-approve-agreement]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const agreement = state.pendingAgreements.find((item) => item.id === btn.dataset.approveAgreement);
+      if (!agreement) return;
+      const confirmed = await showConfirm(`Approve "${agreement.title}"?`, {
+        title: "Approve agreement",
+        confirmText: "Approve",
+      });
+      if (!confirmed) return;
+      try {
+        const response = await actionPendingAgreement(agreement.id, "approve");
+        const updated = response.agreement;
+        state.pendingAgreements = state.pendingAgreements.map((entry) =>
+          entry.id === agreement.id ? updated : entry,
+        );
+        renderPendingAgreementsQueue();
+        await showAlert(`Approval logged and email sent to ${response.recipients?.join(", ") || "owner"}.`, {
+          title: "Approved",
+        });
+      } catch (err) {
+        await showAlert(`Unable to approve agreement. ${err.message}`, { title: "Approval failed" });
+      }
+    });
+  });
+
+  table.querySelectorAll("button[data-deny-agreement]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const agreement = state.pendingAgreements.find((item) => item.id === btn.dataset.denyAgreement);
+      if (!agreement) return;
+      const confirmed = await showConfirm(`Deny "${agreement.title}"?`, {
+        title: "Deny agreement",
+        confirmText: "Deny",
+      });
+      if (!confirmed) return;
+      try {
+        const response = await actionPendingAgreement(agreement.id, "deny");
+        const updated = response.agreement;
+        state.pendingAgreements = state.pendingAgreements.map((entry) =>
+          entry.id === agreement.id ? updated : entry,
+        );
+        renderPendingAgreementsQueue();
+        await showAlert(`Denial logged and email sent to ${response.recipients?.join(", ") || "owner"}.`, {
+          title: "Denied",
+        });
+      } catch (err) {
+        await showAlert(`Unable to deny agreement. ${err.message}`, { title: "Denial failed" });
       }
     });
   });
@@ -2220,15 +2407,48 @@ function initPendingAgreementsUi() {
       closePendingAgreementModal();
     }
   });
+  agreementModal.owner?.addEventListener("input", () => {
+    const name = agreementModal.owner?.value?.trim();
+    if (!name) return;
+    const match = state.notificationUsers.find(
+      (user) => user.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (match && agreementModal.ownerEmail) {
+      agreementModal.ownerEmail.value = match.email;
+    }
+  });
+  agreementModal.ownerEmail?.addEventListener("input", () => {
+    const email = agreementModal.ownerEmail?.value?.trim().toLowerCase();
+    if (!email) return;
+    const match = state.notificationUsers.find((user) => user.email.toLowerCase() === email);
+    if (match && agreementModal.owner) {
+      agreementModal.owner.value = match.name;
+    }
+  });
+  agreementModal.contractInput?.addEventListener("input", () => {
+    const contract = resolveContractByLabel(agreementModal.contractInput?.value);
+    if (contract) {
+      selectPendingAgreementContract(contract);
+    } else {
+      agreementModal.contractInput.dataset.contractId = "";
+      updatePendingAgreementContractMeta(null);
+    }
+  });
   agreementModal.save?.addEventListener("click", async () => {
     const agreementId = pendingAgreementModalState.agreementId;
     const title = agreementModal.name?.value?.trim() || "";
     const owner = agreementModal.owner?.value?.trim() || "";
+    const ownerEmail = agreementModal.ownerEmail?.value?.trim() || "";
     const dueDate = agreementModal.dueDate?.value ?? "";
     const status = agreementModal.status?.value?.trim() ?? "";
+    const contractId = agreementModal.contractInput?.dataset.contractId || "";
 
     if (!title || !owner) {
       await showAlert("Agreement title and owner are required.", { title: "Missing info" });
+      return;
+    }
+    if (!ownerEmail) {
+      await showAlert("Owner email is required to send nudges.", { title: "Missing info" });
       return;
     }
 
@@ -2237,8 +2457,10 @@ function initPendingAgreementsUi() {
         const updated = await updatePendingAgreement(agreementId, {
           title,
           owner,
+          owner_email: ownerEmail,
           due_date: dueDate,
           status,
+          contract_id: contractId || null,
         });
         state.pendingAgreements = state.pendingAgreements.map((entry) =>
           entry.id === agreementId ? updated : entry,
@@ -2249,8 +2471,10 @@ function initPendingAgreementsUi() {
         await createPendingAgreement({
           title,
           owner,
+          owner_email: ownerEmail,
           due_date: dueDate,
           status,
+          contract_id: contractId || null,
         });
         await loadPendingAgreements({ reset: true });
         await showAlert("Pending agreement added to the queue.", { title: "Added" });
@@ -2334,6 +2558,7 @@ function initPendingAgreementsUi() {
       if ($("pendingUserEmail")) $("pendingUserEmail").value = "";
       renderUserDirectories();
       renderNotificationOptions();
+      renderPendingAgreementOwnerEmails();
       const status = $("pendingUserStatus");
       if (status) status.textContent = "User added.";
     } catch (err) {

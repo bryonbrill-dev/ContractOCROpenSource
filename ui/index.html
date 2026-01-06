@@ -549,6 +549,7 @@
               <thead>
                 <tr>
                   <th>Agreement</th>
+                  <th>Contract</th>
                   <th>Owner</th>
                   <th>Due</th>
                   <th>Status</th>
@@ -782,6 +783,7 @@
               <option value="event_reminder">Event reminder</option>
               <option value="pending_agreement_reminder">Pending agreement reminder</option>
               <option value="pending_agreement_nudge">Pending agreement nudge</option>
+              <option value="pending_agreement_action">Pending agreement action</option>
               <option value="task_nudge">Task nudge</option>
             </select>
           </label>
@@ -1029,6 +1031,11 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
           <input id="pendingAgreementEditOwner" class="muted-input" />
         </label>
         <label class="small" style="display:block;">
+          <span>Owner email</span>
+          <input id="pendingAgreementEditOwnerEmail" class="muted-input" list="pendingAgreementOwnerEmails" />
+          <datalist id="pendingAgreementOwnerEmails"></datalist>
+        </label>
+        <label class="small" style="display:block;">
           <span>Due date</span>
           <input id="pendingAgreementEditDueDate" type="date" class="muted-input" />
         </label>
@@ -1036,6 +1043,17 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
           <span>Status</span>
           <input id="pendingAgreementEditStatus" class="muted-input" />
         </label>
+        <label class="small" style="display:block;">
+          <span>Linked contract</span>
+          <input
+            id="pendingAgreementContractSearch"
+            class="muted-input"
+            list="pendingAgreementContractList"
+            placeholder="Search contracts by title or vendor"
+          />
+          <datalist id="pendingAgreementContractList"></datalist>
+        </label>
+        <div class="muted small" id="pendingAgreementContractMeta"></div>
       </div>
       <div class="mt-6 flex flex-wrap justify-end gap-3">
         <button id="pendingAgreementEditCancel" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
