@@ -2250,6 +2250,18 @@ def _smtp_from_address() -> str:
     raise RuntimeError("SMTP_FROM or SMTP_USERNAME must be set for email delivery")
 
 
+def _app_base_url() -> str:
+    base = _env_first("APP_BASE_URL", "PUBLIC_APP_URL", "APP_URL")
+    return base.rstrip("/") if base else ""
+
+
+def _format_app_link(label: str, path: str = "") -> Optional[str]:
+    base = _app_base_url()
+    if not base:
+        return None
+    return f"{label}: {base}{path}"
+
+
 def _send_email(recipients: List[str], subject: str, body: str) -> None:
     # SMTP configuration (set as environment variables):
     #   SMTP_HOST        -> SMTP server hostname (e.g., smtp.sendgrid.net)
@@ -2300,14 +2312,27 @@ def _format_event_subject(event_type: str, title: str, event_date: str, offset_d
 
 
 def _format_event_body(event: sqlite3.Row, offset_days: int) -> str:
+    contract_status = event["contract_status"] or "Unknown"
     lines = [
         f"Contract: {event['title']}",
         f"Vendor: {event['vendor'] or 'N/A'}",
         f"Agreement Type: {event['agreement_type'] or 'Uncategorized'}",
+        f"Contract Status: {contract_status}",
         f"Event Type: {event['event_type']}",
         f"Event Date: {event['event_date']}",
         f"Reminder Offset: {offset_days} day(s)",
     ]
+    app_link = _format_app_link("Open ContractOCR")
+    if app_link:
+        lines.extend(
+            [
+                "",
+                app_link,
+                _format_app_link(
+                    "Download contract PDF", f"/api/contracts/{event['contract_id']}/download"
+                ),
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -2320,7 +2345,8 @@ def _send_due_reminders(reference_date: date) -> Dict[str, Any]:
         rows = conn.execute(
             """
             SELECT rs.event_id, rs.recipients, rs.offsets_json, rs.enabled,
-                   e.event_date, e.event_type, c.title, c.vendor, c.agreement_type
+                   e.event_date, e.event_type, e.contract_id,
+                   c.title, c.vendor, c.agreement_type, c.status as contract_status
             FROM reminder_settings rs
             JOIN events e ON e.id = rs.event_id
             JOIN contracts c ON c.id = e.contract_id
@@ -2452,6 +2478,9 @@ def _format_pending_agreement_body(
         lines.append(
             f"- {agreement['title']} (Owner: {agreement['owner']}, Due: {due_date}, Status: {status})"
         )
+    app_link = _format_app_link("Open ContractOCR")
+    if app_link:
+        lines.extend(["", app_link])
     return "\n".join(lines)
 
 
@@ -2466,6 +2495,9 @@ def _format_pending_agreement_nudge_body(agreement: sqlite3.Row) -> str:
         f"Due Date: {due_date}",
         f"Status: {status}",
     ]
+    app_link = _format_app_link("Open ContractOCR")
+    if app_link:
+        lines.extend(["", app_link])
     return "\n".join(lines)
 
 
@@ -2482,6 +2514,9 @@ def _format_task_nudge_body(task: sqlite3.Row) -> str:
         "",
         f"Description: {description}",
     ]
+    app_link = _format_app_link("Open ContractOCR")
+    if app_link:
+        lines.extend(["", app_link])
     return "\n".join(lines)
 
 
