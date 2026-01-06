@@ -467,7 +467,7 @@
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
         <div>
           <h3 style="margin:0">Pending Agreements</h3>
-          <div class="muted small">Configure reminder schedules and nudge approvers for pending agreements.</div>
+          <div class="muted small">Admin setup for recurring reminders, notification recipients, and approval nudges.</div>
         </div>
         <button id="pendingAgreementsGuide" type="button">Guided walkthrough</button>
       </div>
@@ -529,6 +529,22 @@
             <tbody id="pendingReminderTable"></tbody>
           </table>
         </div>
+        <div class="col card" style="display:flex; flex-direction:column; gap:12px;">
+          <div class="section">
+            <h4 style="margin-top:0;">Notification recipients</h4>
+            <div class="muted small">Manage the user list used across reminders and task assignments.</div>
+            <div id="pendingUserDirectory" class="folder-list"></div>
+            <div class="inline" style="margin-top:8px;">
+              <input id="pendingUserName" placeholder="Name" />
+              <input id="pendingUserEmail" placeholder="Email" />
+              <button id="pendingUserAdd" type="button">Add user</button>
+            </div>
+            <div class="muted small" id="pendingUserStatus" style="margin-top:6px;"></div>
+          </div>
+          <div class="section small muted">
+            Pending agreements are approval workflows tied to contracts; tasks are manual to-dos you assign to a person.
+          </div>
+        </div>
         <div class="col card queue-card" id="pendingAgreementsQueueCard">
           <div class="queue-header">
             <div>
@@ -563,17 +579,6 @@
           <button id="pendingAgreementsLoadMore" class="hidden" type="button" style="margin-top:10px;">
             Load more
           </button>
-          <div class="section" style="margin-top:12px;">
-            <h4>Notification recipients</h4>
-            <div class="muted small">Manage the user list used across reminders and task assignments.</div>
-            <div id="pendingUserDirectory" class="folder-list"></div>
-            <div class="inline" style="margin-top:8px;">
-              <input id="pendingUserName" placeholder="Name" />
-              <input id="pendingUserEmail" placeholder="Email" />
-              <button id="pendingUserAdd" type="button">Add user</button>
-            </div>
-            <div class="muted small" id="pendingUserStatus" style="margin-top:6px;"></div>
-          </div>
         </div>
       </div>
     </div>
