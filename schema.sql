@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL,
   owner         TEXT NOT NULL,
+  owner_email   TEXT,
+  contract_id   TEXT,
   due_date      TEXT,
   status        TEXT,
   created_at    TEXT NOT NULL

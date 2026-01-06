@@ -278,6 +278,8 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
               id TEXT PRIMARY KEY,
               title TEXT NOT NULL,
               owner TEXT NOT NULL,
+              owner_email TEXT,
+              contract_id TEXT,
               due_date TEXT,
               status TEXT,
               created_at TEXT NOT NULL
@@ -285,6 +287,17 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
               ON pending_agreements(created_at);
             """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id ON pending_agreements(contract_id)"
+        )
+    else:
+        if not has_column("pending_agreements", "owner_email"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN owner_email TEXT")
+        if not has_column("pending_agreements", "contract_id"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN contract_id TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id ON pending_agreements(contract_id)"
         )
 
     if not has_table("pending_agreement_reminders"):
@@ -403,15 +416,61 @@ class NotificationUser(BaseModel):
 class PendingAgreementCreate(BaseModel):
     title: str
     owner: str
+    owner_email: Optional[str] = None
     due_date: Optional[str] = None
     status: Optional[str] = None
+    contract_id: Optional[str] = None
+
+    @validator("owner", pre=True)
+    def normalize_owner(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @validator("owner_email", pre=True)
+    def normalize_owner_email(cls, value: Optional[str]) -> Optional[str]:
+        cleaned = str(value or "").strip().lower()
+        return cleaned or None
+
+    @validator("contract_id", pre=True)
+    def normalize_contract_id(cls, value: Optional[str]) -> Optional[str]:
+        cleaned = str(value or "").strip()
+        return cleaned or None
 
 
 class PendingAgreementUpdate(BaseModel):
     title: Optional[str] = None
     owner: Optional[str] = None
+    owner_email: Optional[str] = None
     due_date: Optional[str] = None
     status: Optional[str] = None
+    contract_id: Optional[str] = None
+
+    @validator("owner", pre=True)
+    def normalize_owner(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value or "").strip()
+
+    @validator("owner_email", pre=True)
+    def normalize_owner_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip().lower()
+        return cleaned or None
+
+    @validator("contract_id", pre=True)
+    def normalize_contract_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip()
+        return cleaned or None
+
+
+class PendingAgreementAction(BaseModel):
+    action: str
+
+    @validator("action", pre=True)
+    def normalize_action(cls, value: str) -> str:
+        return str(value or "").strip().lower()
 
 
 class PendingAgreementReminderCreate(BaseModel):
@@ -668,6 +727,8 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   owner TEXT NOT NULL,
+  owner_email TEXT,
+  contract_id TEXT,
   due_date TEXT,
   status TEXT,
   created_at TEXT NOT NULL
@@ -1098,23 +1159,34 @@ def list_pending_agreements(
     params: List[Any] = []
     if query:
         where_clause = (
-            "WHERE lower(title) LIKE ? OR lower(owner) LIKE ? "
-            "OR lower(coalesce(status, '')) LIKE ?"
+            "WHERE lower(p.title) LIKE ? OR lower(p.owner) LIKE ? "
+            "OR lower(coalesce(p.owner_email, '')) LIKE ? "
+            "OR lower(coalesce(p.status, '')) LIKE ? "
+            "OR lower(coalesce(c.title, '')) LIKE ? "
+            "OR lower(coalesce(c.vendor, '')) LIKE ?"
         )
         like = f"%{query.lower()}%"
-        params.extend([like, like, like])
+        params.extend([like, like, like, like, like, like])
 
     with db() as conn:
         total = conn.execute(
-            f"SELECT COUNT(1) AS count FROM pending_agreements {where_clause}",
+            f"""
+            SELECT COUNT(1) AS count
+            FROM pending_agreements p
+            LEFT JOIN contracts c ON c.id = p.contract_id
+            {where_clause}
+            """,
             params,
         ).fetchone()["count"]
         rows = conn.execute(
             f"""
-            SELECT id, title, owner, due_date, status, created_at
-            FROM pending_agreements
+            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
+                   p.contract_id, p.created_at, c.title AS contract_title,
+                   c.vendor AS contract_vendor
+            FROM pending_agreements p
+            LEFT JOIN contracts c ON c.id = p.contract_id
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY p.created_at DESC
             LIMIT ? OFFSET ?
             """,
             (*params, limit, offset),
@@ -1133,25 +1205,48 @@ def create_pending_agreement(payload: PendingAgreementCreate):
     owner = payload.owner.strip()
     if not title or not owner:
         raise HTTPException(status_code=400, detail="title and owner are required")
+    owner_email = payload.owner_email
+    if not owner_email and "@" in owner:
+        owner_email = owner.strip().lower()
     agreement_id = str(uuid.uuid4())
     due_date = payload.due_date.strip() if payload.due_date else None
     status = payload.status.strip() if payload.status else None
+    contract_id = payload.contract_id
     created_at = now_iso()
 
     with db() as conn:
+        if contract_id:
+            exists = conn.execute(
+                "SELECT id FROM contracts WHERE id = ?", (contract_id,)
+            ).fetchone()
+            if not exists:
+                raise HTTPException(status_code=404, detail="Contract not found")
         conn.execute(
             """
-            INSERT INTO pending_agreements (id, title, owner, due_date, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO pending_agreements (
+              id, title, owner, owner_email, contract_id, due_date, status, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (agreement_id, title, owner, due_date, status, created_at),
+            (
+                agreement_id,
+                title,
+                owner,
+                owner_email,
+                contract_id,
+                due_date,
+                status,
+                created_at,
+            ),
         )
     return {
         "id": agreement_id,
         "title": title,
         "owner": owner,
+        "owner_email": owner_email,
         "due_date": due_date,
         "status": status,
+        "contract_id": contract_id,
         "created_at": created_at,
     }
 
@@ -1160,7 +1255,10 @@ def create_pending_agreement(payload: PendingAgreementCreate):
 def update_pending_agreement(agreement_id: str, payload: PendingAgreementUpdate):
     with db() as conn:
         row = conn.execute(
-            "SELECT id, title, owner, due_date, status, created_at FROM pending_agreements WHERE id = ?",
+            """
+            SELECT id, title, owner, owner_email, contract_id, due_date, status, created_at
+            FROM pending_agreements WHERE id = ?
+            """,
             (agreement_id,),
         ).fetchone()
         if not row:
@@ -1168,6 +1266,8 @@ def update_pending_agreement(agreement_id: str, payload: PendingAgreementUpdate)
 
         title = row["title"]
         owner = row["owner"]
+        owner_email = row["owner_email"]
+        contract_id = row["contract_id"]
         due_date = row["due_date"]
         status = row["status"]
 
@@ -1181,26 +1281,48 @@ def update_pending_agreement(agreement_id: str, payload: PendingAgreementUpdate)
             if not cleaned:
                 raise HTTPException(status_code=400, detail="owner cannot be empty")
             owner = cleaned
+            if "@" in owner and not owner_email:
+                owner_email = owner.strip().lower()
+        if payload.owner_email is not None:
+            owner_email = payload.owner_email
         if payload.due_date is not None:
             due_date = payload.due_date.strip() or None
         if payload.status is not None:
             status = payload.status.strip() or None
+        if payload.contract_id is not None:
+            contract_id = payload.contract_id or None
+            if contract_id:
+                exists = conn.execute(
+                    "SELECT id FROM contracts WHERE id = ?", (contract_id,)
+                ).fetchone()
+                if not exists:
+                    raise HTTPException(status_code=404, detail="Contract not found")
 
         conn.execute(
             """
             UPDATE pending_agreements
-            SET title = ?, owner = ?, due_date = ?, status = ?
+            SET title = ?, owner = ?, owner_email = ?, contract_id = ?, due_date = ?, status = ?
             WHERE id = ?
             """,
-            (title, owner, due_date, status, agreement_id),
+            (title, owner, owner_email, contract_id, due_date, status, agreement_id),
         )
+        contract = None
+        if contract_id:
+            contract = conn.execute(
+                "SELECT title, vendor FROM contracts WHERE id = ?",
+                (contract_id,),
+            ).fetchone()
 
     return {
         "id": agreement_id,
         "title": title,
         "owner": owner,
+        "owner_email": owner_email,
         "due_date": due_date,
         "status": status,
+        "contract_id": contract_id,
+        "contract_title": contract["title"] if contract else None,
+        "contract_vendor": contract["vendor"] if contract else None,
         "created_at": row["created_at"],
     }
 
@@ -2637,6 +2759,25 @@ def _parse_email_list(values: List[str]) -> List[str]:
     return unique
 
 
+def _resolve_pending_agreement_recipient(
+    conn: sqlite3.Connection, agreement: sqlite3.Row
+) -> Optional[str]:
+    owner_email = (agreement["owner_email"] or "").strip().lower()
+    if owner_email:
+        return owner_email
+    owner = (agreement["owner"] or "").strip()
+    if "@" in owner:
+        return owner.strip().lower()
+    if owner:
+        row = conn.execute(
+            "SELECT email FROM notification_users WHERE lower(name) = ? LIMIT 1",
+            (owner.lower(),),
+        ).fetchone()
+        if row and row["email"]:
+            return str(row["email"]).strip().lower()
+    return None
+
+
 def _should_send_frequency(frequency: str, reference_date: date) -> bool:
     frequency = (frequency or "").strip().lower()
     if frequency == "daily":
@@ -2668,8 +2809,9 @@ def _format_pending_agreement_body(
     for agreement in agreements:
         due_date = agreement["due_date"] or "N/A"
         status = agreement["status"] or "Pending"
+        contract_label = agreement["contract_title"] or agreement["contract_id"] or "Unlinked"
         lines.append(
-            f"- {agreement['title']} (Owner: {agreement['owner']}, Due: {due_date}, Status: {status})"
+            f"- {agreement['title']} (Owner: {agreement['owner']}, Contract: {contract_label}, Due: {due_date}, Status: {status})"
         )
     app_link = _format_app_link("Open ContractOCR")
     if app_link:
@@ -2680,17 +2822,52 @@ def _format_pending_agreement_body(
 def _format_pending_agreement_nudge_body(agreement: sqlite3.Row) -> str:
     due_date = agreement["due_date"] or "N/A"
     status = agreement["status"] or "Pending"
+    contract_label = agreement["contract_title"] or agreement["contract_id"] or "Unlinked"
     lines = [
         "A pending agreement is ready for your review.",
         "",
         f"Title: {agreement['title']}",
         f"Owner: {agreement['owner']}",
+        f"Contract: {contract_label}",
         f"Due Date: {due_date}",
         f"Status: {status}",
     ]
     app_link = _format_app_link("Open ContractOCR")
     if app_link:
         lines.extend(["", app_link])
+    if agreement["contract_id"]:
+        contract_link = _format_app_link(
+            "Download contract PDF", f"/api/contracts/{agreement['contract_id']}/download"
+        )
+        if contract_link:
+            lines.append(contract_link)
+    return "\n".join(lines)
+
+
+def _format_pending_agreement_action_body(
+    agreement: sqlite3.Row, action_label: str
+) -> str:
+    due_date = agreement["due_date"] or "N/A"
+    status = agreement["status"] or "Pending"
+    contract_label = agreement["contract_title"] or agreement["contract_id"] or "Unlinked"
+    lines = [
+        f"Pending agreement {action_label.lower()} notification.",
+        "",
+        f"Title: {agreement['title']}",
+        f"Owner: {agreement['owner']}",
+        f"Contract: {contract_label}",
+        f"Due Date: {due_date}",
+        f"Status: {status}",
+    ]
+    app_link = _format_app_link("Open ContractOCR")
+    if app_link:
+        lines.extend(["", app_link])
+    if agreement["contract_id"]:
+        contract_link = _format_app_link(
+            "Download contract PDF", f"/api/contracts/{agreement['contract_id']}/download"
+        )
+        if contract_link:
+            lines.append(contract_link)
     return "\n".join(lines)
 
 
@@ -2745,8 +2922,10 @@ def send_pending_agreement_reminders(date_str: Optional[str] = None):
         ).fetchall()
         agreements = conn.execute(
             """
-            SELECT id, title, owner, due_date, status, created_at
-            FROM pending_agreements
+            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status, p.contract_id,
+                   p.created_at, c.title AS contract_title
+            FROM pending_agreements p
+            LEFT JOIN contracts c ON c.id = p.contract_id
             ORDER BY created_at DESC
             """
         ).fetchall()
@@ -2792,17 +2971,23 @@ def nudge_pending_agreement(agreement_id: str):
     with db() as conn:
         agreement = conn.execute(
             """
-            SELECT id, title, owner, due_date, status, created_at
-            FROM pending_agreements WHERE id = ?
+            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
+                   p.contract_id, p.created_at, c.title AS contract_title,
+                   c.vendor AS contract_vendor
+            FROM pending_agreements p
+            LEFT JOIN contracts c ON c.id = p.contract_id
+            WHERE p.id = ?
             """,
             (agreement_id,),
         ).fetchone()
         if not agreement:
             raise HTTPException(status_code=404, detail="Pending agreement not found")
-
-    recipient = agreement["owner"].strip()
-    if not recipient:
-        raise HTTPException(status_code=400, detail="Pending agreement owner is missing")
+        recipient = _resolve_pending_agreement_recipient(conn, agreement)
+        if not recipient:
+            raise HTTPException(
+                status_code=400,
+                detail="Pending agreement owner email is missing",
+            )
 
     subject = f"Pending agreement nudge: {agreement['title']}"
     body = _format_pending_agreement_nudge_body(agreement)
@@ -2816,9 +3001,68 @@ def nudge_pending_agreement(agreement_id: str):
             "agreement_id": agreement_id,
             "title": agreement["title"],
             "due_date": agreement["due_date"],
+            "owner_email": recipient,
+            "contract_id": agreement["contract_id"],
         },
     )
     return {"nudge": "sent", "agreement_id": agreement_id, "recipients": [recipient]}
+
+
+@app.post("/api/pending-agreements/{agreement_id}/action")
+def action_pending_agreement(agreement_id: str, payload: PendingAgreementAction):
+    action = payload.action
+    if action not in {"approve", "deny"}:
+        raise HTTPException(status_code=400, detail="Action must be approve or deny")
+    action_label = "Approved" if action == "approve" else "Denied"
+
+    with db() as conn:
+        agreement = conn.execute(
+            """
+            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
+                   p.contract_id, p.created_at, c.title AS contract_title,
+                   c.vendor AS contract_vendor
+            FROM pending_agreements p
+            LEFT JOIN contracts c ON c.id = p.contract_id
+            WHERE p.id = ?
+            """,
+            (agreement_id,),
+        ).fetchone()
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+        conn.execute(
+            "UPDATE pending_agreements SET status = ? WHERE id = ?",
+            (action_label, agreement_id),
+        )
+        recipient = _resolve_pending_agreement_recipient(conn, agreement)
+        if not recipient:
+            raise HTTPException(
+                status_code=400,
+                detail="Pending agreement owner email is missing",
+            )
+
+    subject = f"Pending agreement {action}: {agreement['title']}"
+    updated_agreement = dict(agreement)
+    updated_agreement["status"] = action_label
+    body = _format_pending_agreement_action_body(updated_agreement, action_label)
+    _send_email_with_log(
+        [recipient],
+        subject,
+        body,
+        kind="pending_agreement_action",
+        related_id=agreement_id,
+        metadata={
+            "agreement_id": agreement_id,
+            "action": action,
+            "status": action_label,
+            "owner_email": recipient,
+            "contract_id": agreement["contract_id"],
+        },
+    )
+
+    response = dict(agreement)
+    response["status"] = action_label
+    response["owner_email"] = agreement["owner_email"] or recipient
+    return {"action": action, "agreement": response, "recipients": [recipient]}
 
 
 @app.post("/api/tasks/{task_id}/nudge")
