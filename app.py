@@ -288,9 +288,6 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
               ON pending_agreements(created_at);
             """
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id ON pending_agreements(contract_id)"
-        )
     else:
         if not has_column("pending_agreements", "owner_email"):
             conn.execute("ALTER TABLE pending_agreements ADD COLUMN owner_email TEXT")
@@ -735,6 +732,8 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
   ON pending_agreements(created_at);
+CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id
+  ON pending_agreements(contract_id);
 
 CREATE TABLE IF NOT EXISTS pending_agreement_reminders (
   id TEXT PRIMARY KEY,
