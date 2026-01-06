@@ -250,6 +250,27 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             [(u["name"], u["email"], now_iso()) for u in DEFAULT_NOTIFICATION_USERS],
         )
 
+    if not has_table("notification_logs"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS notification_logs (
+              id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              recipients_json TEXT NOT NULL,
+              subject TEXT NOT NULL,
+              body TEXT NOT NULL,
+              status TEXT NOT NULL,
+              error TEXT,
+              related_id TEXT,
+              metadata_json TEXT,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_notification_logs_created_at ON notification_logs(created_at);
+            CREATE INDEX IF NOT EXISTS idx_notification_logs_kind ON notification_logs(kind);
+            CREATE INDEX IF NOT EXISTS idx_notification_logs_status ON notification_logs(status);
+            """
+        )
+
     if not has_table("pending_agreements"):
         conn.executescript(
             """
@@ -627,6 +648,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
 CREATE INDEX IF NOT EXISTS idx_notification_users_name
   ON notification_users(name);
 
+CREATE TABLE IF NOT EXISTS notification_logs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  recipients_json TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error TEXT,
+  related_id TEXT,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_created_at ON notification_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_kind ON notification_logs(kind);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_status ON notification_logs(status);
+
 CREATE TABLE IF NOT EXISTS pending_agreements (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -973,6 +1010,80 @@ def delete_notification_user(user_id: int):
             raise HTTPException(status_code=404, detail="User not found")
         conn.execute("DELETE FROM notification_users WHERE id = ?", (user_id,))
         return {"deleted": user_id}
+
+
+@app.get("/api/notification-logs")
+def list_notification_logs(
+    limit: int = 50,
+    offset: int = 0,
+    query: str = "",
+    status: str = "all",
+    kind: str = "all",
+):
+    limit = max(1, min(limit, 200))
+    offset = max(offset, 0)
+    params: List[Any] = []
+    where_parts = []
+    if query:
+        like = f"%{query.lower()}%"
+        where_parts.append(
+            """
+            (
+              lower(subject) LIKE ?
+              OR lower(recipients_json) LIKE ?
+              OR lower(body) LIKE ?
+              OR lower(kind) LIKE ?
+              OR lower(coalesce(related_id, '')) LIKE ?
+              OR lower(coalesce(metadata_json, '')) LIKE ?
+            )
+            """
+        )
+        params.extend([like, like, like, like, like, like])
+    if status and status != "all":
+        where_parts.append("status = ?")
+        params.append(status)
+    if kind and kind != "all":
+        where_parts.append("kind = ?")
+        params.append(kind)
+
+    where_clause = ""
+    if where_parts:
+        where_clause = "WHERE " + " AND ".join(where_parts)
+
+    with db() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(1) AS count FROM notification_logs {where_clause}",
+            tuple(params),
+        ).fetchone()["count"]
+        rows = conn.execute(
+            f"""
+            SELECT id, kind, recipients_json, subject, body, status, error, related_id,
+                   metadata_json, created_at
+            FROM notification_logs
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        ).fetchall()
+
+    items = []
+    for row in rows:
+        data = dict(row)
+        data["recipients"] = safe_json_list(data.pop("recipients_json", None))
+        metadata_raw = data.pop("metadata_json", None)
+        try:
+            data["metadata"] = json.loads(metadata_raw) if metadata_raw else None
+        except json.JSONDecodeError:
+            data["metadata"] = None
+        items.append(data)
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @app.get("/api/pending-agreements")
@@ -2262,6 +2373,41 @@ def _format_app_link(label: str, path: str = "") -> Optional[str]:
     return f"{label}: {base}{path}"
 
 
+def _log_notification_send(
+    kind: str,
+    recipients: List[str],
+    subject: str,
+    body: str,
+    status: str,
+    error: Optional[str] = None,
+    related_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    payload = json.dumps(recipients)
+    metadata_json = json.dumps(metadata) if metadata else None
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO notification_logs (
+              id, kind, recipients_json, subject, body, status, error, related_id, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                kind,
+                payload,
+                subject,
+                body,
+                status,
+                error,
+                related_id,
+                metadata_json,
+                now_iso(),
+            ),
+        )
+
+
 def _send_email(recipients: List[str], subject: str, body: str) -> None:
     # SMTP configuration (set as environment variables):
     #   SMTP_HOST        -> SMTP server hostname (e.g., smtp.sendgrid.net)
@@ -2303,6 +2449,39 @@ def _send_email(recipients: List[str], subject: str, body: str) -> None:
             smtp.login(username, password)
         smtp.send_message(msg)
 
+
+def _send_email_with_log(
+    recipients: List[str],
+    subject: str,
+    body: str,
+    kind: str,
+    related_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    try:
+        _send_email(recipients, subject, body)
+        _log_notification_send(
+            kind=kind,
+            recipients=recipients,
+            subject=subject,
+            body=body,
+            status="sent",
+            related_id=related_id,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        error_msg = f"{type(exc).__name__}: {exc}"
+        _log_notification_send(
+            kind=kind,
+            recipients=recipients,
+            subject=subject,
+            body=body,
+            status="error",
+            error=error_msg,
+            related_id=related_id,
+            metadata=metadata,
+        )
+        raise
 
 def _format_event_subject(event_type: str, title: str, event_date: str, offset_days: int) -> str:
     kind = event_type.replace("_", " ").title()
@@ -2399,7 +2578,21 @@ def _send_due_reminders(reference_date: date) -> Dict[str, Any]:
                         offset_days,
                     )
                     body = _format_event_body(row, offset_days)
-                    _send_email(recipients, subject, body)
+                    _send_email_with_log(
+                        recipients,
+                        subject,
+                        body,
+                        kind="event_reminder",
+                        related_id=row["event_id"],
+                        metadata={
+                            "event_id": row["event_id"],
+                            "contract_id": row["contract_id"],
+                            "event_type": row["event_type"],
+                            "event_date": row["event_date"],
+                            "offset_days": offset_days,
+                            "scheduled_for": scheduled_for,
+                        },
+                    )
                     conn.execute(
                         """
                         UPDATE reminder_sends
@@ -2570,7 +2763,18 @@ def send_pending_agreement_reminders(date_str: Optional[str] = None):
             subject = _format_pending_agreement_subject(reminder["frequency"])
             body = _format_pending_agreement_body(reminder["message"], agreements)
             try:
-                _send_email(recipients, subject, body)
+                _send_email_with_log(
+                    recipients,
+                    subject,
+                    body,
+                    kind="pending_agreement_reminder",
+                    related_id=reminder["id"],
+                    metadata={
+                        "frequency": reminder["frequency"],
+                        "agreement_count": len(agreements),
+                        "reference_date": reference_date.isoformat(),
+                    },
+                )
                 sent += 1
             except Exception as exc:
                 errors.append(
@@ -2602,7 +2806,18 @@ def nudge_pending_agreement(agreement_id: str):
 
     subject = f"Pending agreement nudge: {agreement['title']}"
     body = _format_pending_agreement_nudge_body(agreement)
-    _send_email([recipient], subject, body)
+    _send_email_with_log(
+        [recipient],
+        subject,
+        body,
+        kind="pending_agreement_nudge",
+        related_id=agreement_id,
+        metadata={
+            "agreement_id": agreement_id,
+            "title": agreement["title"],
+            "due_date": agreement["due_date"],
+        },
+    )
     return {"nudge": "sent", "agreement_id": agreement_id, "recipients": [recipient]}
 
 
@@ -2625,7 +2840,18 @@ def nudge_task(task_id: str):
 
     subject = f"Task nudge: {task['title']}"
     body = _format_task_nudge_body(task)
-    _send_email(assignees, subject, body)
+    _send_email_with_log(
+        assignees,
+        subject,
+        body,
+        kind="task_nudge",
+        related_id=task_id,
+        metadata={
+            "task_id": task_id,
+            "title": task["title"],
+            "due_date": task["due_date"],
+        },
+    )
     return {"nudge": "sent", "task_id": task_id, "recipients": assignees}
 
 # ----------------------------

@@ -198,6 +198,7 @@
     <button id="navPlanner">Planner</button>
     <button id="navPendingAgreements">Pending Agreements</button>
     <button id="navTasks">Tasks</button>
+    <button id="navNotifications">Notifications</button>
     <button id="navOutputs">Support Page</button>
   </div>
 
@@ -677,6 +678,140 @@
     </div>
   </div>
 
+  <div id="notificationsPage" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">Notifications</h3>
+          <div class="muted small">Review what emails are scheduled, who receives them, and track delivery history.</div>
+        </div>
+        <button id="notificationsGuide" type="button">Guided walkthrough</button>
+      </div>
+
+      <div class="section" style="margin-top:12px;" id="notificationOverview">
+        <h4>Email trigger overview</h4>
+        <div class="muted small">See active reminders and nudges that will result in email sends.</div>
+        <div class="row wrap" style="gap:12px; margin-top:10px;">
+          <div class="col card" id="notificationEventRules">
+            <h4 style="margin-top:0;">Contract event reminders</h4>
+            <div class="muted small">Renewal, termination, and effective date reminders with offsets.</div>
+            <table class="compact-table" style="margin-top:10px;">
+              <thead>
+                <tr>
+                  <th>Contract</th>
+                  <th>Event</th>
+                  <th>Date</th>
+                  <th>Offsets</th>
+                  <th>Recipients</th>
+                </tr>
+              </thead>
+              <tbody id="notificationEventTable"></tbody>
+            </table>
+          </div>
+          <div class="col card" id="notificationPendingRules">
+            <h4 style="margin-top:0;">Pending agreement reminders</h4>
+            <div class="muted small">Scheduled nudges for pending approvals.</div>
+            <table class="compact-table" style="margin-top:10px;">
+              <thead>
+                <tr>
+                  <th>Frequency</th>
+                  <th>Roles</th>
+                  <th>Recipients</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="notificationPendingTable"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="row wrap" style="gap:12px; margin-top:12px;">
+          <div class="col card" id="notificationTaskRules">
+            <h4 style="margin-top:0;">Task reminders</h4>
+            <div class="muted small">Task reminders use offsets relative to due dates.</div>
+            <table class="compact-table" style="margin-top:10px;">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Due</th>
+                  <th>Offsets</th>
+                  <th>Assignees</th>
+                </tr>
+              </thead>
+              <tbody id="notificationTaskTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:12px;" id="notificationLogSection">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div>
+            <h4 style="margin:0;">Notification delivery log</h4>
+            <div class="muted small">Search sent or failed email notifications stored in the database.</div>
+          </div>
+          <div class="inline">
+            <button id="notificationLogRefresh" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="row wrap filters" style="margin-top:12px; gap:12px;">
+          <label style="flex:1; min-width:220px;">
+            <span class="label-with-info">
+              <span class="info-icon" title="Search by subject line, recipient, status, or related ID.">i</span>
+              <span>Search log</span>
+            </span>
+            <input id="notificationLogSearch" type="text" placeholder="Search subject, recipient, or metadata" />
+          </label>
+          <label style="min-width:160px;">
+            <span class="label-with-info">
+              <span class="info-icon" title="Filter by delivery status.">i</span>
+              <span>Status</span>
+            </span>
+            <select id="notificationLogStatus">
+              <option value="all">All statuses</option>
+              <option value="sent">Sent</option>
+              <option value="error">Error</option>
+            </select>
+          </label>
+          <label style="min-width:200px;">
+            <span class="label-with-info">
+              <span class="info-icon" title="Filter by notification type.">i</span>
+              <span>Type</span>
+            </span>
+            <select id="notificationLogKind">
+              <option value="all">All types</option>
+              <option value="event_reminder">Event reminder</option>
+              <option value="pending_agreement_reminder">Pending agreement reminder</option>
+              <option value="pending_agreement_nudge">Pending agreement nudge</option>
+              <option value="task_nudge">Task nudge</option>
+            </select>
+          </label>
+          <div class="inline" style="margin-top:18px;">
+            <button id="notificationLogSearchButton" type="button">Search</button>
+            <button id="notificationLogSearchClear" type="button">Clear</button>
+          </div>
+        </div>
+        <div class="muted small" id="notificationLogMeta" style="margin-top:6px;"></div>
+        <div class="queue-scroll" style="margin-top:10px;">
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Sent at</th>
+                <th>Type</th>
+                <th>Recipients</th>
+                <th>Subject</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="notificationLogTable"></tbody>
+          </table>
+        </div>
+        <button id="notificationLogLoadMore" class="hidden" type="button" style="margin-top:10px;">
+          Load more
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="outputsPage" class="hidden">
     <div class="card" style="margin-top:16px">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -822,6 +957,7 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
           <li><b>Contracts</b> — Review recent uploads, open a contract detail view, edit terms, and manage events.</li>
           <li><b>All Contracts</b> — Search, filter, and export the full contract list across all statuses.</li>
           <li><b>Planner</b> — Add or adjust events on a calendar grid, then review upcoming dates in the list view.</li>
+          <li><b>Notifications</b> — Track scheduled emails, reminder recipients, and delivery history.</li>
           <li><b>Support Page</b> — Reference color meanings, confidence guidance, and workflow tips.</li>
         </ul>
       </div>

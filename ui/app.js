@@ -31,6 +31,17 @@ const state = {
   tasksTotal: 0,
   tasksHasMore: false,
   tasksExpanded: false,
+  notificationLogs: [],
+  notificationLogQuery: "",
+  notificationLogStatus: "all",
+  notificationLogKind: "all",
+  notificationLogOffset: 0,
+  notificationLogLimit: 40,
+  notificationLogTotal: 0,
+  notificationLogHasMore: false,
+  notificationEventReminders: [],
+  notificationPendingReminders: [],
+  notificationTaskReminders: [],
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -389,6 +400,16 @@ async function createNotificationUser(payload) {
 
 async function deleteNotificationUser(userId) {
   await apiFetch(`/api/notification-users/${userId}`, { method: "DELETE" });
+}
+
+async function fetchNotificationLogs({ query = "", status = "all", kind = "all", limit = 40, offset = 0 } = {}) {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  if (query) params.set("query", query);
+  if (status) params.set("status", status);
+  if (kind) params.set("kind", kind);
+  return apiFetch(`/api/notification-logs?${params.toString()}`);
 }
 
 async function fetchPendingAgreementReminders() {
@@ -2415,8 +2436,211 @@ function initTasksUi() {
   loadTasks({ reset: true });
 }
 
+function formatList(values, fallback = "—") {
+  if (!values || !values.length) return fallback;
+  return values.join(", ");
+}
+
+function renderNotificationEventTable() {
+  const table = $("notificationEventTable");
+  if (!table) return;
+  if (!state.notificationEventReminders.length) {
+    table.innerHTML = `<tr><td colspan="5" class="muted small">No event reminders configured yet.</td></tr>`;
+    return;
+  }
+  table.innerHTML = state.notificationEventReminders
+    .map((event) => {
+      const reminder = event.reminder || {};
+      const recipients = formatList(reminder.recipients);
+      const offsets = reminder.offsets ? reminder.offsets.join(", ") : "—";
+      return `
+        <tr>
+          <td>${event.title || "Untitled"}</td>
+          <td><span class="pill event-type event-${event.event_type}">${event.event_type}</span></td>
+          <td>${event.event_date || "—"}</td>
+          <td>${offsets}</td>
+          <td>${recipients}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderNotificationPendingTable() {
+  const table = $("notificationPendingTable");
+  if (!table) return;
+  if (!state.notificationPendingReminders.length) {
+    table.innerHTML = `<tr><td colspan="4" class="muted small">No pending agreement reminder rules configured yet.</td></tr>`;
+    return;
+  }
+  table.innerHTML = state.notificationPendingReminders
+    .map((reminder) => {
+      const roles = formatList(reminder.roles);
+      const recipients = formatList(reminder.recipients);
+      const message = reminder.message || "—";
+      return `
+        <tr>
+          <td>${reminder.frequency}</td>
+          <td>${roles}</td>
+          <td>${recipients}</td>
+          <td>${message}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderNotificationTaskTable() {
+  const table = $("notificationTaskTable");
+  if (!table) return;
+  if (!state.notificationTaskReminders.length) {
+    table.innerHTML = `<tr><td colspan="4" class="muted small">No task reminders configured yet.</td></tr>`;
+    return;
+  }
+  table.innerHTML = state.notificationTaskReminders
+    .map((task) => {
+      const offsets = formatList(task.reminders);
+      const assignees = formatList(task.assignees);
+      return `
+        <tr>
+          <td>${task.title || "Untitled"}</td>
+          <td>${task.due_date || "—"}</td>
+          <td>${offsets}</td>
+          <td>${assignees}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderNotificationLogTable() {
+  const table = $("notificationLogTable");
+  const meta = $("notificationLogMeta");
+  if (!table) return;
+  if (meta) {
+    meta.textContent = `${state.notificationLogTotal} entries`;
+  }
+  if (!state.notificationLogs.length) {
+    table.innerHTML = `<tr><td colspan="5" class="muted small">No notification logs match your search.</td></tr>`;
+    return;
+  }
+  table.innerHTML = state.notificationLogs
+    .map((entry) => {
+      const recipients = formatList(entry.recipients);
+      return `
+        <tr>
+          <td>${entry.created_at || "—"}</td>
+          <td>${entry.kind || "—"}</td>
+          <td>${recipients}</td>
+          <td>${entry.subject || "—"}</td>
+          <td>${entry.status || "—"}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+async function loadNotificationOverview() {
+  try {
+    const [eventsRes, pendingRes, tasksRes] = await Promise.all([
+      apiFetch("/api/events?month=all&event_type=all&sort=date_asc"),
+      apiFetch("/api/pending-agreement-reminders"),
+      apiFetch("/api/tasks?limit=100&offset=0"),
+    ]);
+    const events = await eventsRes.json();
+    const pendingReminders = await pendingRes.json();
+    const taskPayload = await tasksRes.json();
+
+    state.notificationEventReminders = (events || []).filter(
+      (event) => event.reminder && event.reminder.enabled && event.reminder.recipients?.length,
+    );
+    state.notificationPendingReminders = pendingReminders || [];
+    state.notificationTaskReminders = (taskPayload.items || []).filter(
+      (task) => !task.completed && task.reminders?.length && task.assignees?.length,
+    );
+
+    renderNotificationEventTable();
+    renderNotificationPendingTable();
+    renderNotificationTaskTable();
+  } catch (err) {
+    await showAlert(`Unable to load notifications overview. ${err.message}`, { title: "Load failed" });
+  }
+}
+
+async function loadNotificationLogs({ reset = false } = {}) {
+  if (reset) {
+    state.notificationLogOffset = 0;
+    state.notificationLogs = [];
+  }
+  const res = await fetchNotificationLogs({
+    query: state.notificationLogQuery,
+    status: state.notificationLogStatus,
+    kind: state.notificationLogKind,
+    limit: state.notificationLogLimit,
+    offset: state.notificationLogOffset,
+  });
+  const data = await res.json();
+  const items = data.items || [];
+  if (reset) {
+    state.notificationLogs = items;
+  } else {
+    state.notificationLogs = [...state.notificationLogs, ...items];
+  }
+  state.notificationLogTotal = data.total || 0;
+  state.notificationLogLimit = data.limit || state.notificationLogLimit;
+  state.notificationLogOffset = (data.offset || 0) + items.length;
+  state.notificationLogHasMore = state.notificationLogOffset < state.notificationLogTotal;
+  $("notificationLogLoadMore")?.classList.toggle("hidden", !state.notificationLogHasMore);
+  renderNotificationLogTable();
+}
+
+function initNotificationsUi() {
+  const searchInput = $("notificationLogSearch");
+  const statusFilter = $("notificationLogStatus");
+  const kindFilter = $("notificationLogKind");
+
+  const runSearch = async () => {
+    state.notificationLogQuery = searchInput?.value.trim() || "";
+    state.notificationLogStatus = statusFilter?.value || "all";
+    state.notificationLogKind = kindFilter?.value || "all";
+    await loadNotificationLogs({ reset: true });
+  };
+
+  $("notificationLogSearchButton")?.addEventListener("click", runSearch);
+  $("notificationLogSearchClear")?.addEventListener("click", async () => {
+    if (searchInput) searchInput.value = "";
+    if (statusFilter) statusFilter.value = "all";
+    if (kindFilter) kindFilter.value = "all";
+    state.notificationLogQuery = "";
+    state.notificationLogStatus = "all";
+    state.notificationLogKind = "all";
+    await loadNotificationLogs({ reset: true });
+  });
+  $("notificationLogRefresh")?.addEventListener("click", async () => {
+    await loadNotificationOverview();
+    await loadNotificationLogs({ reset: true });
+  });
+  $("notificationLogLoadMore")?.addEventListener("click", async () => {
+    await loadNotificationLogs();
+  });
+  searchInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runSearch();
+    }
+  });
+}
+
 function showPage(page) {
-  const pages = ["contracts", "allContracts", "planner", "pendingAgreements", "tasks", "outputs"];
+  const pages = [
+    "contracts",
+    "allContracts",
+    "planner",
+    "pendingAgreements",
+    "tasks",
+    "notifications",
+    "outputs",
+  ];
   closeTour();
   state.currentPage = page;
   pages.forEach((p) => {
@@ -2432,6 +2656,10 @@ function showPage(page) {
     if (!state.events.length) {
       loadEvents();
     }
+  }
+  if (page === "notifications") {
+    loadNotificationOverview();
+    loadNotificationLogs({ reset: true });
   }
 }
 
@@ -2590,8 +2818,32 @@ function initGuidedTours() {
     },
   ];
 
+  const notificationsSteps = [
+    {
+      targetId: "notificationEventRules",
+      title: "Event reminder rules",
+      body: "Review contract event reminders, offsets, and recipients.",
+    },
+    {
+      targetId: "notificationPendingRules",
+      title: "Pending agreement reminders",
+      body: "See which roles and recipients receive pending agreement emails.",
+    },
+    {
+      targetId: "notificationTaskRules",
+      title: "Task reminder coverage",
+      body: "Confirm task reminder offsets and who will be notified.",
+    },
+    {
+      targetId: "notificationLogSection",
+      title: "Search notification history",
+      body: "Use filters to review sent and failed email notifications.",
+    },
+  ];
+
   $("pendingAgreementsGuide")?.addEventListener("click", () => startTour(pendingAgreementsSteps));
   $("tasksGuide")?.addEventListener("click", () => startTour(taskSteps));
+  $("notificationsGuide")?.addEventListener("click", () => startTour(notificationsSteps));
 
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) {
@@ -2892,6 +3144,7 @@ $("navAllContracts")?.addEventListener("click", () => showPage("allContracts"));
 $("navPlanner")?.addEventListener("click", () => showPage("planner"));
 $("navPendingAgreements")?.addEventListener("click", () => showPage("pendingAgreements"));
 $("navTasks")?.addEventListener("click", () => showPage("tasks"));
+$("navNotifications")?.addEventListener("click", () => showPage("notifications"));
 $("navOutputs")?.addEventListener("click", () => showPage("outputs"));
 
 $("saveApi").addEventListener("click", async () => {
@@ -2911,6 +3164,7 @@ initEventsUi();
 initPlannerUi();
 initPendingAgreementsUi();
 initTasksUi();
+initNotificationsUi();
 initAllContractsUi();
 initThemeToggle();
 initPreviewFullscreen();

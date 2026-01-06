@@ -156,6 +156,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
 CREATE INDEX IF NOT EXISTS idx_notification_users_name ON notification_users(name);
 
 -- =========================
+-- Notification delivery logs
+-- =========================
+CREATE TABLE IF NOT EXISTS notification_logs (
+  id             TEXT PRIMARY KEY,
+  kind           TEXT NOT NULL,
+  recipients_json TEXT NOT NULL,
+  subject        TEXT NOT NULL,
+  body           TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  error          TEXT,
+  related_id     TEXT,
+  metadata_json  TEXT,
+  created_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_logs_created_at ON notification_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_kind ON notification_logs(kind);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_status ON notification_logs(status);
+
+-- =========================
 -- Pending agreements queue
 -- =========================
 CREATE TABLE IF NOT EXISTS pending_agreements (
