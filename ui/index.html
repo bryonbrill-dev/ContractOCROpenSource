@@ -114,6 +114,15 @@
     .planner-entry .entry-meta { font-size: 10px; color: #475569; }
     .planner-more { font-size: 10px; color: #2563eb; }
     .planner-empty { min-height: 20px; }
+    .planner-panel { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; margin-top: 10px; background: #f8fafc; }
+    .planner-panel > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .planner-panel > summary::-webkit-details-marker { display: none; }
+    .planner-panel > summary::marker { content: ""; }
+    .planner-panel .panel-title { display: flex; align-items: baseline; gap: 8px; font-weight: 700; }
+    .planner-panel .panel-title h4 { margin: 0; }
+    .planner-panel .panel-meta { font-size: 12px; color: #6b7280; font-weight: 500; }
+    .planner-panel .panel-chevron { font-size: 18px; color: #64748b; transition: transform 0.2s ease; }
+    .planner-panel[open] .panel-chevron { transform: rotate(180deg); }
     .active-row { background: #fef9c3; }
     .manual-term > summary { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px; }
     .event-date-group { background: #f8fafc; }
@@ -371,26 +380,38 @@
       </div>
 
       <div class="muted small" id="plannerStatus" style="margin-top:4px"></div>
-      <div class="section" style="margin-top:10px;">
-        <h4>Calendar View</h4>
-        <div class="muted small">Shows events on the selected month. Abbreviated contract names appear on each day.</div>
+      <details class="planner-panel" open>
+        <summary>
+          <div class="panel-title">
+            <h4>Calendar View</h4>
+            <span class="panel-meta">Monthly event grid</span>
+          </div>
+          <span class="panel-chevron" aria-hidden="true">▾</span>
+        </summary>
+        <div class="muted small" style="margin-top:6px;">Shows events on the selected month. Abbreviated contract names appear on each day.</div>
         <div id="plannerCalendar" class="planner-calendar"></div>
-      </div>
-      <table style="width:100%; margin-top:10px; border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th>Contract</th>
-            <th>Type</th>
-            <th>Date</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="plannerTable"></tbody>
-      </table>
-      <div class="section" style="margin-top:16px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <table style="width:100%; margin-top:10px; border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th>Contract</th>
+              <th>Type</th>
+              <th>Date</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="plannerTable"></tbody>
+        </table>
+      </details>
+      <details class="planner-panel" style="margin-top:16px;">
+        <summary>
+          <div class="panel-title">
+            <h4>List View</h4>
+            <span class="panel-meta">Search and review timelines</span>
+          </div>
+          <span class="panel-chevron" aria-hidden="true">▾</span>
+        </summary>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px;">
           <div>
-            <h4 style="margin:0">List View</h4>
             <div class="muted small">Search and review renewal/termination timelines by date and contract.</div>
           </div>
           <div class="inline">
@@ -458,7 +479,7 @@
 
         <div class="muted small" id="eventsStatus" style="margin-top:4px"></div>
         <div id="eventsList" class="folder-list"></div>
-      </div>
+      </details>
     </div>
   </div>
 

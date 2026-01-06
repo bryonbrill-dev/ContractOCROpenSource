@@ -237,7 +237,7 @@ function updatePendingAgreementContractMeta(contract) {
     contractMeta.textContent = "No contract linked.";
     return;
   }
-  const link = `${getApiBase()}/api/contracts/${contract.id}/download`;
+  const link = `${getApiBase()}/api/contracts/${contract.id}/original`;
   contractMeta.innerHTML = `Linked: ${escapeHtml(contractOptionLabel(contract))} · <a href="${link}" target="_blank" rel="noopener">View contract</a>`;
 }
 
@@ -2169,7 +2169,7 @@ function renderPendingAgreementsQueue() {
     const label = agreement.contract_title
       ? `${agreement.contract_title}${agreement.contract_vendor ? ` — ${agreement.contract_vendor}` : ""}`
       : agreement.contract_id;
-    const link = `${getApiBase()}/api/contracts/${agreement.contract_id}/download`;
+    const link = `${getApiBase()}/api/contracts/${agreement.contract_id}/original`;
     return `<div>${escapeHtml(label)}</div><a class="muted small" href="${link}" target="_blank" rel="noopener">View contract</a>`;
   };
   table.innerHTML = state.pendingAgreements
