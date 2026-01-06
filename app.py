@@ -732,8 +732,6 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
   ON pending_agreements(created_at);
-CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id
-  ON pending_agreements(contract_id);
 
 CREATE TABLE IF NOT EXISTS pending_agreement_reminders (
   id TEXT PRIMARY KEY,
