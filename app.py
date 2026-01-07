@@ -21,7 +21,7 @@ from typing import Optional, List, Literal, Dict, Any
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -559,7 +559,7 @@ class ReminderUpdate(BaseModel):
     offsets: List[int] = Field(default_factory=lambda: [90, 60, 30, 7, 0])
     enabled: bool = True
 
-    @validator("recipients", pre=True)
+    @field_validator("recipients", mode="before")
     def normalize_recipients(cls, value):
         if value is None:
             return []
@@ -569,7 +569,7 @@ class ReminderUpdate(BaseModel):
             return [str(v).strip() for v in value if str(v).strip()]
         return []
 
-    @validator("offsets", pre=True)
+    @field_validator("offsets", mode="before")
     def normalize_offsets(cls, value):
         if value is None:
             return []
@@ -608,11 +608,11 @@ class NotificationUserCreate(BaseModel):
     name: str
     email: str
 
-    @validator("name", pre=True)
+    @field_validator("name", mode="before")
     def normalize_name(cls, value: str) -> str:
         return str(value or "").strip()
 
-    @validator("email", pre=True)
+    @field_validator("email", mode="before")
     def normalize_email(cls, value: str) -> str:
         return str(value or "").strip().lower()
 
@@ -627,7 +627,7 @@ class AuthLogin(BaseModel):
     email: str
     password: str
 
-    @validator("email", pre=True)
+    @field_validator("email", mode="before")
     def normalize_email(cls, value: str) -> str:
         return str(value or "").strip().lower()
 
@@ -647,16 +647,16 @@ class PendingAgreementCreate(BaseModel):
     status: Optional[str] = None
     contract_id: Optional[str] = None
 
-    @validator("owner", pre=True)
+    @field_validator("owner", mode="before")
     def normalize_owner(cls, value: str) -> str:
         return str(value or "").strip()
 
-    @validator("owner_email", pre=True)
+    @field_validator("owner_email", mode="before")
     def normalize_owner_email(cls, value: Optional[str]) -> Optional[str]:
         cleaned = str(value or "").strip().lower()
         return cleaned or None
 
-    @validator("contract_id", pre=True)
+    @field_validator("contract_id", mode="before")
     def normalize_contract_id(cls, value: Optional[str]) -> Optional[str]:
         cleaned = str(value or "").strip()
         return cleaned or None
@@ -670,20 +670,20 @@ class PendingAgreementUpdate(BaseModel):
     status: Optional[str] = None
     contract_id: Optional[str] = None
 
-    @validator("owner", pre=True)
+    @field_validator("owner", mode="before")
     def normalize_owner(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         return str(value or "").strip()
 
-    @validator("owner_email", pre=True)
+    @field_validator("owner_email", mode="before")
     def normalize_owner_email(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         cleaned = str(value or "").strip().lower()
         return cleaned or None
 
-    @validator("contract_id", pre=True)
+    @field_validator("contract_id", mode="before")
     def normalize_contract_id(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
@@ -694,7 +694,7 @@ class PendingAgreementUpdate(BaseModel):
 class PendingAgreementAction(BaseModel):
     action: str
 
-    @validator("action", pre=True)
+    @field_validator("action", mode="before")
     def normalize_action(cls, value: str) -> str:
         return str(value or "").strip().lower()
 
@@ -705,15 +705,15 @@ class PendingAgreementReminderCreate(BaseModel):
     recipients: List[str] = Field(default_factory=list)
     message: Optional[str] = None
 
-    @validator("roles", "recipients", pre=True)
-    def normalize_list(cls, value, field):
+    @field_validator("roles", "recipients", mode="before")
+    def normalize_list(cls, value, info):
         if value is None:
             return []
         if isinstance(value, str):
             value = value.split(",")
         if isinstance(value, (list, tuple)):
             cleaned = [str(v).strip() for v in value if str(v).strip()]
-            if field.name == "roles":
+            if info.field_name == "roles":
                 try:
                     return [int(v) for v in cleaned]
                 except ValueError as exc:
@@ -721,11 +721,11 @@ class PendingAgreementReminderCreate(BaseModel):
             return cleaned
         return []
 
-    @validator("frequency", pre=True)
+    @field_validator("frequency", mode="before")
     def normalize_frequency(cls, value: str) -> str:
         return str(value or "").strip().lower()
 
-    @validator("message", pre=True)
+    @field_validator("message", mode="before")
     def normalize_message(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
@@ -738,15 +738,15 @@ class PendingAgreementReminderUpdate(BaseModel):
     recipients: Optional[List[str]] = None
     message: Optional[str] = None
 
-    @validator("roles", "recipients", pre=True)
-    def normalize_list(cls, value, field):
+    @field_validator("roles", "recipients", mode="before")
+    def normalize_list(cls, value, info):
         if value is None:
             return None
         if isinstance(value, str):
             value = value.split(",")
         if isinstance(value, (list, tuple)):
             cleaned = [str(v).strip() for v in value if str(v).strip()]
-            if field.name == "roles":
+            if info.field_name == "roles":
                 try:
                     return [int(v) for v in cleaned]
                 except ValueError as exc:
@@ -754,13 +754,13 @@ class PendingAgreementReminderUpdate(BaseModel):
             return cleaned
         return []
 
-    @validator("frequency", pre=True)
+    @field_validator("frequency", mode="before")
     def normalize_frequency(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         return str(value).strip().lower()
 
-    @validator("message", pre=True)
+    @field_validator("message", mode="before")
     def normalize_message(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
