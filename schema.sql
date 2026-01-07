@@ -43,6 +43,16 @@ CREATE TABLE IF NOT EXISTS contract_tags (
 CREATE INDEX IF NOT EXISTS idx_contract_tags_contract ON contract_tags(contract_id);
 CREATE INDEX IF NOT EXISTS idx_contract_tags_tag ON contract_tags(tag_id);
 
+CREATE TABLE IF NOT EXISTS tag_roles (
+  tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  role_id       INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+  created_at    TEXT NOT NULL,
+  PRIMARY KEY (tag_id, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tag_roles_tag ON tag_roles(tag_id);
+CREATE INDEX IF NOT EXISTS idx_tag_roles_role ON tag_roles(role_id);
+
 -- =========================
 -- Tag keywords (for auto-generation)
 -- =========================

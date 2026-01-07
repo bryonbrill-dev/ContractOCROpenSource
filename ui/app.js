@@ -4,6 +4,7 @@ const state = {
   plannerEvents: [],
   definitions: [],
   tags: [],
+  roles: [],
   agreementTypes: [],
   contracts: [],
   allContracts: [],
@@ -277,7 +278,7 @@ function openPendingReminderModal(reminder) {
   title.textContent = "Edit reminder rule";
   frequency.value = reminder.frequency || "weekly";
   message.value = reminder.message || "";
-  renderCheckboxList("pendingReminderEditRoles", PENDING_ROLE_OPTIONS, reminder.roles || []);
+  renderCheckboxList("pendingReminderEditRoles", state.roles, reminder.roles || []);
   renderCheckboxList(
     "pendingReminderEditRecipients",
     state.notificationUsers,
@@ -834,16 +835,18 @@ async function testApi() {
 }
 
 async function loadReferenceData() {
-  const [defsRes, tagsRes, agRes, usersRes] = await Promise.all([
+  const [defsRes, tagsRes, agRes, usersRes, rolesRes] = await Promise.all([
     apiFetch("/api/terms/definitions"),
     apiFetch("/api/tags"),
     apiFetch("/api/agreement-types"),
     apiFetch("/api/notification-users"),
+    apiFetch("/api/roles"),
   ]);
   state.definitions = await defsRes.json();
   state.tags = await tagsRes.json();
   state.agreementTypes = await agRes.json();
   state.notificationUsers = await usersRes.json();
+  state.roles = await rolesRes.json();
   renderAllContractsFilters();
   renderNotificationOptions();
   renderPendingReminderTable();
@@ -2033,7 +2036,6 @@ async function exportAllContractsCsv() {
   downloadCsv(`contracts-${timestampForFilename()}.csv`, headers, rows);
 }
 
-const PENDING_ROLE_OPTIONS = ["Legal", "Procurement", "Finance", "Operations", "Sales"];
 const TASK_REMINDER_OPTIONS = ["7 days before", "1 day before", "Due date", "1 day after"];
 
 function formatUserLabel(user) {
@@ -2047,11 +2049,24 @@ function renderCheckboxList(containerId, items, selectedValues = []) {
     container.innerHTML = `<div class="muted small">No options available.</div>`;
     return;
   }
+  const selectedSet = new Set(selectedValues.map((value) => String(value)));
   container.innerHTML = items
     .map((item, index) => {
-      const value = typeof item === "string" ? item : item.email;
-      const label = typeof item === "string" ? item : formatUserLabel(item);
-      const isChecked = selectedValues.includes(value);
+      let value = "";
+      let label = "";
+      if (typeof item === "string") {
+        value = item;
+        label = item;
+      } else if (item && typeof item === "object") {
+        if ("email" in item) {
+          value = item.email;
+          label = formatUserLabel(item);
+        } else {
+          value = String(item.id ?? "");
+          label = item.name ?? value;
+        }
+      }
+      const isChecked = selectedSet.has(String(value));
       return `
         <label class="inline small" style="gap:6px;">
           <input type="checkbox" value="${escapeHtml(value)}" ${isChecked ? "checked" : ""} />
@@ -2121,7 +2136,7 @@ function renderUserDirectories() {
 }
 
 function renderNotificationOptions() {
-  renderCheckboxList("pendingRoleOptions", PENDING_ROLE_OPTIONS);
+  renderCheckboxList("pendingRoleOptions", state.roles);
   renderCheckboxList("pendingRecipientOptions", state.notificationUsers);
   renderCheckboxList("taskAssigneeOptions", state.notificationUsers);
   renderCheckboxList("taskReminderOptions", TASK_REMINDER_OPTIONS);
@@ -2256,10 +2271,11 @@ function renderPendingReminderTable() {
       const recipients = reminder.recipients
         .map((email) => userLookup.get(email) || email)
         .join(", ");
+      const roleNames = formatRoleList(reminder.roles, "None");
       return `
         <tr>
           <td>${escapeHtml(titleCase(reminder.frequency))}</td>
-          <td>${escapeHtml(reminder.roles.join(", ") || "None")}</td>
+          <td>${escapeHtml(roleNames)}</td>
           <td>${escapeHtml(recipients || "None")}</td>
           <td>${escapeHtml(reminder.message || "")}</td>
           <td>
@@ -2528,7 +2544,9 @@ function initPendingAgreementsUi() {
     const reminderId = pendingReminderModalState.reminderId;
     if (!reminderId) return;
     const frequency = reminderModal.frequency?.value || "weekly";
-    const roles = getCheckedValues("pendingReminderEditRoles");
+    const roles = getCheckedValues("pendingReminderEditRoles")
+      .map((value) => Number.parseInt(value, 10))
+      .filter((value) => Number.isFinite(value));
     const recipients = getCheckedValues("pendingReminderEditRecipients");
     const message = reminderModal.message?.value?.trim();
 
@@ -2669,7 +2687,9 @@ function initPendingAgreementsUi() {
 
   $("pendingReminderSave")?.addEventListener("click", async () => {
     const frequency = $("pendingReminderFrequency")?.value || "weekly";
-    const roles = getCheckedValues("pendingRoleOptions");
+    const roles = getCheckedValues("pendingRoleOptions")
+      .map((value) => Number.parseInt(value, 10))
+      .filter((value) => Number.isFinite(value));
     const recipients = getCheckedValues("pendingRecipientOptions");
     const message = $("pendingReminderMessage")?.value?.trim();
 
@@ -2822,6 +2842,14 @@ function formatList(values, fallback = "—") {
   return values.join(", ");
 }
 
+function formatRoleList(roleIds, fallback = "—") {
+  if (!roleIds || !roleIds.length) return fallback;
+  const lookup = new Map(state.roles.map((role) => [String(role.id), role.name]));
+  return roleIds
+    .map((roleId) => lookup.get(String(roleId)) || `Role ${roleId}`)
+    .join(", ");
+}
+
 function renderNotificationEventTable() {
   const table = $("notificationEventTable");
   if (!table) return;
@@ -2856,7 +2884,7 @@ function renderNotificationPendingTable() {
   }
   table.innerHTML = state.notificationPendingReminders
     .map((reminder) => {
-      const roles = formatList(reminder.roles);
+      const roles = formatRoleList(reminder.roles);
       const recipients = formatList(reminder.recipients);
       const message = reminder.message || "—";
       return `
