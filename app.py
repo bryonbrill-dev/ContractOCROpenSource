@@ -211,6 +211,11 @@ def safe_json_int_list(value: Optional[str]) -> List[int]:
     return []
 
 
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
+
+
 def _get_user_role_ids(conn: sqlite3.Connection, user_id: int) -> List[int]:
     rows = conn.execute(
         "SELECT role_id FROM auth_user_roles WHERE user_id = ?",
@@ -234,6 +239,26 @@ def _validate_role_ids(conn: sqlite3.Connection, role_ids: List[int]) -> List[in
         missing_list = ", ".join(str(role_id) for role_id in missing)
         raise HTTPException(status_code=400, detail=f"Unknown role id(s): {missing_list}")
     return unique_ids
+
+
+def _set_user_roles(conn: sqlite3.Connection, user_id: int, role_ids: List[int]) -> None:
+    conn.execute("DELETE FROM auth_user_roles WHERE user_id = ?", (user_id,))
+    if not role_ids:
+        return
+    now = now_iso()
+    if _table_has_column(conn, "auth_user_roles", "created_at"):
+        conn.executemany(
+            """
+            INSERT INTO auth_user_roles (user_id, role_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            [(user_id, role_id, now) for role_id in role_ids],
+        )
+    else:
+        conn.executemany(
+            "INSERT INTO auth_user_roles (user_id, role_id) VALUES (?, ?)",
+            [(user_id, role_id) for role_id in role_ids],
+        )
 
 
 def _load_role_recipients(conn: sqlite3.Connection, role_ids: List[int]) -> List[str]:
@@ -637,6 +662,122 @@ class AuthUserOut(BaseModel):
     name: str
     email: str
     roles: List[str] = Field(default_factory=list)
+
+
+class AdminUserCreate(BaseModel):
+    name: str
+    email: str
+    password: str
+    roles: List[int] = Field(default_factory=list)
+    is_active: bool = True
+    is_admin: bool = False
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("email", mode="before")
+    def normalize_email(cls, value: str) -> str:
+        return str(value or "").strip().lower()
+
+    @field_validator("roles", mode="before")
+    def normalize_roles(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            try:
+                return [int(v) for v in cleaned]
+            except ValueError as exc:
+                raise ValueError("role IDs must be integers") from exc
+        return []
+
+
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    roles: Optional[List[int]] = None
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value or "").strip()
+
+    @field_validator("email", mode="before")
+    def normalize_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value or "").strip().lower()
+
+    @field_validator("roles", mode="before")
+    def normalize_roles(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            try:
+                return [int(v) for v in cleaned]
+            except ValueError as exc:
+                raise ValueError("role IDs must be integers") from exc
+        return []
+
+
+class RoleCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("description", mode="before")
+    def normalize_description(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value).strip() or None
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value or "").strip()
+
+    @field_validator("description", mode="before")
+    def normalize_description(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value).strip() or None
+
+
+class TagPermissionUpdate(BaseModel):
+    roles: List[int] = Field(default_factory=list)
+
+    @field_validator("roles", mode="before")
+    def normalize_roles(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            try:
+                return [int(v) for v in cleaned]
+            except ValueError as exc:
+                raise ValueError("role IDs must be integers") from exc
+        return []
 
 
 class PendingAgreementCreate(BaseModel):
@@ -1488,8 +1629,254 @@ def delete_tag(tag_id: int, _: Dict[str, Any] = Depends(require_admin)):
 @app.get("/api/roles")
 def list_roles(_: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
-        rows = conn.execute("SELECT id, name FROM auth_roles ORDER BY name").fetchall()
+        if _table_has_column(conn, "auth_roles", "description"):
+            rows = conn.execute(
+                "SELECT id, name, description FROM auth_roles ORDER BY name"
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT id, name FROM auth_roles ORDER BY name").fetchall()
         return [dict(r) for r in rows]
+
+
+@app.post("/api/roles")
+def create_role(payload: RoleCreate, _: Dict[str, Any] = Depends(require_admin)):
+    name = payload.name
+    if not name:
+        raise HTTPException(status_code=400, detail="Role name is required")
+    with db() as conn:
+        now = now_iso()
+        try:
+            if _table_has_column(conn, "auth_roles", "description"):
+                cur = conn.execute(
+                    "INSERT INTO auth_roles (name, description, created_at) VALUES (?, ?, ?)",
+                    (name, payload.description, now),
+                )
+            else:
+                cur = conn.execute(
+                    "INSERT INTO auth_roles (name, created_at) VALUES (?, ?)",
+                    (name, now),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=400, detail="Role name already exists") from exc
+        return {"id": cur.lastrowid, "name": name, "description": payload.description}
+
+
+@app.put("/api/roles/{role_id}")
+def update_role(
+    role_id: int,
+    payload: RoleUpdate,
+    _: Dict[str, Any] = Depends(require_admin),
+):
+    if payload.name is None and payload.description is None:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    with db() as conn:
+        row = conn.execute("SELECT id FROM auth_roles WHERE id = ?", (role_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Role not found")
+        if payload.name:
+            try:
+                conn.execute("UPDATE auth_roles SET name = ? WHERE id = ?", (payload.name, role_id))
+            except sqlite3.IntegrityError as exc:
+                raise HTTPException(status_code=400, detail="Role name already exists") from exc
+        if payload.description is not None and _table_has_column(conn, "auth_roles", "description"):
+            conn.execute(
+                "UPDATE auth_roles SET description = ? WHERE id = ?",
+                (payload.description, role_id),
+            )
+        return {"id": role_id}
+
+
+@app.delete("/api/roles/{role_id}")
+def delete_role(role_id: int, _: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        row = conn.execute("SELECT id FROM auth_roles WHERE id = ?", (role_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Role not found")
+        conn.execute("DELETE FROM auth_roles WHERE id = ?", (role_id,))
+        return {"deleted": role_id}
+
+
+# ----------------------------
+# Admin user management
+# ----------------------------
+@app.get("/api/admin/users")
+def list_admin_users(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        if _table_has_column(conn, "auth_users", "is_admin"):
+            rows = conn.execute(
+                """
+                SELECT id, name, email, is_active, is_admin, created_at, updated_at
+                FROM auth_users
+                ORDER BY name ASC, email ASC
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, name, email, is_active, created_at, updated_at
+                FROM auth_users
+                ORDER BY name ASC, email ASC
+                """
+            ).fetchall()
+        users = []
+        for row in rows:
+            users.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "email": row["email"],
+                    "is_active": bool(row["is_active"]),
+                    "is_admin": bool(row["is_admin"]) if "is_admin" in row.keys() else False,
+                    "role_ids": _get_user_role_ids(conn, row["id"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return users
+
+
+@app.post("/api/admin/users")
+def create_admin_user(payload: AdminUserCreate, _: Dict[str, Any] = Depends(require_admin)):
+    name = payload.name
+    email = payload.email
+    if not name or not email or not payload.password:
+        raise HTTPException(status_code=400, detail="Name, email, and password are required")
+    with db() as conn:
+        role_ids = _validate_role_ids(conn, payload.roles)
+        now = now_iso()
+        password_hash = hash_password(payload.password)
+        try:
+            if _table_has_column(conn, "auth_users", "is_admin"):
+                cur = conn.execute(
+                    """
+                    INSERT INTO auth_users
+                      (name, email, password_hash, is_active, is_admin, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        name,
+                        email,
+                        password_hash,
+                        1 if payload.is_active else 0,
+                        1 if payload.is_admin else 0,
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    INSERT INTO auth_users
+                      (name, email, password_hash, is_active, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        name,
+                        email,
+                        password_hash,
+                        1 if payload.is_active else 0,
+                        now,
+                        now,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=400, detail="User email already exists") from exc
+        user_id = cur.lastrowid
+        _set_user_roles(conn, user_id, role_ids)
+        return {"id": user_id}
+
+
+@app.put("/api/admin/users/{user_id}")
+def update_admin_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    _: Dict[str, Any] = Depends(require_admin),
+):
+    if (
+        payload.name is None
+        and payload.email is None
+        and payload.password is None
+        and payload.roles is None
+        and payload.is_active is None
+        and payload.is_admin is None
+    ):
+        raise HTTPException(status_code=400, detail="No updates provided")
+    with db() as conn:
+        row = conn.execute("SELECT id FROM auth_users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        updates = []
+        params: List[Any] = []
+        if payload.name is not None:
+            updates.append("name = ?")
+            params.append(payload.name)
+        if payload.email is not None:
+            updates.append("email = ?")
+            params.append(payload.email)
+        if payload.password:
+            updates.append("password_hash = ?")
+            params.append(hash_password(payload.password))
+        if payload.is_active is not None:
+            updates.append("is_active = ?")
+            params.append(1 if payload.is_active else 0)
+        if payload.is_admin is not None and _table_has_column(conn, "auth_users", "is_admin"):
+            updates.append("is_admin = ?")
+            params.append(1 if payload.is_admin else 0)
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(now_iso())
+            params.append(user_id)
+            try:
+                conn.execute(
+                    f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
+                    tuple(params),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise HTTPException(status_code=400, detail="User email already exists") from exc
+        if payload.roles is not None:
+            role_ids = _validate_role_ids(conn, payload.roles)
+            _set_user_roles(conn, user_id, role_ids)
+        return {"id": user_id}
+
+
+# ----------------------------
+# Tag permission endpoints
+# ----------------------------
+@app.get("/api/tag-permissions")
+def list_tag_permissions(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        rows = conn.execute("SELECT tag_id, role_id FROM tag_roles").fetchall()
+        mapping: Dict[int, List[int]] = {}
+        for row in rows:
+            mapping.setdefault(row["tag_id"], []).append(row["role_id"])
+        return mapping
+
+
+@app.put("/api/tag-permissions/{tag_id}")
+def update_tag_permissions(
+    tag_id: int,
+    payload: TagPermissionUpdate,
+    _: Dict[str, Any] = Depends(require_admin),
+):
+    with db() as conn:
+        tag_row = conn.execute("SELECT id FROM tags WHERE id = ?", (tag_id,)).fetchone()
+        if not tag_row:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        role_ids = _validate_role_ids(conn, payload.roles)
+        conn.execute("DELETE FROM tag_roles WHERE tag_id = ?", (tag_id,))
+        if role_ids:
+            now = now_iso()
+            if _table_has_column(conn, "tag_roles", "created_at"):
+                conn.executemany(
+                    "INSERT INTO tag_roles (tag_id, role_id, created_at) VALUES (?, ?, ?)",
+                    [(tag_id, role_id, now) for role_id in role_ids],
+                )
+            else:
+                conn.executemany(
+                    "INSERT INTO tag_roles (tag_id, role_id) VALUES (?, ?)",
+                    [(tag_id, role_id) for role_id in role_ids],
+                )
+        return {"tag_id": tag_id, "role_ids": role_ids}
 
 
 # ----------------------------

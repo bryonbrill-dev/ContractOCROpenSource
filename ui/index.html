@@ -226,6 +226,7 @@
     <button id="navPendingAgreements">Pending Agreements</button>
     <button id="navTasks">Tasks</button>
     <button id="navNotifications">Notifications</button>
+    <button id="navAdmin">Admin</button>
     <button id="navOutputs">Support Page</button>
   </div>
 
@@ -858,6 +859,103 @@
     </div>
   </div>
 
+  <div id="adminPage" class="hidden">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0">Admin Center</h3>
+        <button id="adminRefresh">Refresh</button>
+      </div>
+      <div class="muted small" style="margin-top:6px;">
+        Manage users, roles, and tag permissions. Tags without assigned roles remain visible to everyone.
+      </div>
+
+      <div class="section">
+        <h4>Users</h4>
+        <div class="row wrap">
+          <label class="col small">Name
+            <input id="adminUserName" class="muted-input" placeholder="Full name" />
+          </label>
+          <label class="col small">Email
+            <input id="adminUserEmail" class="muted-input" placeholder="email@company.com" />
+          </label>
+          <label class="col small">Password
+            <input id="adminUserPassword" class="muted-input" type="password" placeholder="Set or reset password" />
+          </label>
+        </div>
+        <div class="row wrap" style="margin-top:8px;">
+          <label class="inline small"><input id="adminUserActive" type="checkbox" checked /> Active</label>
+          <label class="inline small"><input id="adminUserAdmin" type="checkbox" /> Admin</label>
+        </div>
+        <div class="small muted" style="margin-top:8px;">Assign roles</div>
+        <div id="adminUserRoles" class="row wrap" style="margin-top:6px;"></div>
+        <div class="row wrap" style="margin-top:8px;">
+          <button id="adminUserSave">Add user</button>
+          <button id="adminUserCancel" class="link-button" type="button">Cancel</button>
+          <div id="adminUserStatus" class="muted small"></div>
+        </div>
+        <table class="compact-table" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Roles</th>
+              <th>Admin</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="adminUsersTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h4>Roles</h4>
+        <div class="row wrap">
+          <label class="col small">Role name
+            <input id="adminRoleName" class="muted-input" placeholder="e.g., Legal" />
+          </label>
+          <label class="col small">Description
+            <input id="adminRoleDescription" class="muted-input" placeholder="Optional description" />
+          </label>
+        </div>
+        <div class="row wrap" style="margin-top:8px;">
+          <button id="adminRoleSave">Add role</button>
+          <button id="adminRoleCancel" class="link-button" type="button">Cancel</button>
+          <div id="adminRoleStatus" class="muted small"></div>
+        </div>
+        <table class="compact-table" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Description</th>
+              <th></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="adminRolesTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h4>Tag permissions</h4>
+        <div class="muted small" style="margin-top:6px;">
+          Assign roles to restrict tag visibility. Leave a tag unchecked to keep it open to all users.
+        </div>
+        <table class="compact-table" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>Tag</th>
+              <th>Allowed roles</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="adminTagPermissionsTable"></tbody>
+        </table>
+        <div id="adminTagStatus" class="muted small" style="margin-top:6px;"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="outputsPage" class="hidden">
     <div class="card" style="margin-top:16px">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -1004,6 +1102,7 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
           <li><b>All Contracts</b> — Search, filter, and export the full contract list across all statuses.</li>
           <li><b>Planner</b> — Add or adjust events on a calendar grid, then review upcoming dates in the list view.</li>
           <li><b>Notifications</b> — Track scheduled emails, reminder recipients, and delivery history.</li>
+          <li><b>Admin</b> — Manage users, roles, and tag-based access rules.</li>
           <li><b>Support Page</b> — Reference color meanings, confidence guidance, and workflow tips.</li>
         </ul>
       </div>
