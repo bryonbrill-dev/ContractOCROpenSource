@@ -649,6 +649,15 @@ async function apiFetch(path, opts = {}) {
   return res;
 }
 
+async function fetchOptionalJson(path, fallback) {
+  try {
+    const res = await apiFetch(path);
+    return await res.json();
+  } catch (err) {
+    return fallback;
+  }
+}
+
 async function createNotificationUser(payload) {
   const res = await apiFetch("/api/notification-users", {
     method: "POST",
@@ -908,18 +917,20 @@ async function testApi() {
 }
 
 async function loadReferenceData() {
-  const [defsRes, tagsRes, agRes, usersRes, rolesRes] = await Promise.all([
+  const [defsRes, tagsRes, agRes] = await Promise.all([
     apiFetch("/api/terms/definitions"),
     apiFetch("/api/tags"),
     apiFetch("/api/agreement-types"),
-    apiFetch("/api/notification-users"),
-    apiFetch("/api/roles"),
+  ]);
+  const [notificationUsers, roles] = await Promise.all([
+    fetchOptionalJson("/api/notification-users", []),
+    fetchOptionalJson("/api/roles", []),
   ]);
   state.definitions = await defsRes.json();
   state.tags = await tagsRes.json();
   state.agreementTypes = await agRes.json();
-  state.notificationUsers = await usersRes.json();
-  state.roles = await rolesRes.json();
+  state.notificationUsers = notificationUsers;
+  state.roles = roles;
   renderAllContractsFilters();
   renderNotificationOptions();
   renderPendingReminderTable();
