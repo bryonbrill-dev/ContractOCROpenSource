@@ -10,11 +10,13 @@ import smtplib
 import sqlite3
 import logging
 import traceback
+import secrets
+import hmac
 from datetime import datetime, date, timedelta
 from email.message import EmailMessage
 from typing import Optional, List, Literal, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
@@ -189,6 +191,33 @@ def safe_json_list(value: Optional[str]) -> List[str]:
     return []
 
 
+def _hash_password(password: str) -> str:
+    iterations = int(os.environ.get("AUTH_PBKDF2_ITERATIONS", "260000"))
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_str, salt, digest_hex = stored_hash.split("$", 3)
+    except ValueError:
+        return False
+    if algorithm != "pbkdf2_sha256":
+        return False
+    try:
+        iterations = int(iterations_str)
+    except ValueError:
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+    return hmac.compare_digest(digest_hex, digest.hex())
+
+
+def _session_ttl() -> timedelta:
+    hours = int(os.environ.get("AUTH_SESSION_TTL_HOURS", "24"))
+    return timedelta(hours=hours)
+
+
 def init_db():
     with db() as conn:
         conn.executescript(SCHEMA_SQL)
@@ -249,6 +278,83 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO notification_users (name, email, created_at) VALUES (?, ?, ?)",
             [(u["name"], u["email"], now_iso()) for u in DEFAULT_NOTIFICATION_USERS],
         )
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS auth_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          is_admin INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_auth_users_email_lower
+          ON auth_users(lower(email));
+
+        CREATE TABLE IF NOT EXISTS auth_roles (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS auth_user_roles (
+          user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+          role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+          PRIMARY KEY (user_id, role_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          token TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+          ON auth_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires
+          ON auth_sessions(expires_at);
+        """
+    )
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO auth_roles (name, description, created_at)
+        VALUES (?, ?, ?)
+        """,
+        ("admin", "Administrator", now_iso()),
+    )
+
+    existing_users = conn.execute("SELECT COUNT(1) AS count FROM auth_users").fetchone()
+    admin_email = (_env_first("ADMIN_EMAIL", "CONTRACTOCR_ADMIN_EMAIL") or "").strip().lower()
+    admin_password = _env_first("ADMIN_PASSWORD", "CONTRACTOCR_ADMIN_PASSWORD")
+    admin_name = (_env_first("ADMIN_NAME", "CONTRACTOCR_ADMIN_NAME") or "").strip()
+    if existing_users and existing_users["count"] == 0 and admin_email and admin_password:
+        created_at = now_iso()
+        cur = conn.execute(
+            """
+            INSERT INTO auth_users (name, email, password_hash, is_admin, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            """,
+            (
+                admin_name or admin_email,
+                admin_email,
+                _hash_password(admin_password),
+                created_at,
+                created_at,
+            ),
+        )
+        role_row = conn.execute(
+            "SELECT id FROM auth_roles WHERE name = ?",
+            ("admin",),
+        ).fetchone()
+        if role_row:
+            conn.execute(
+                "INSERT OR IGNORE INTO auth_user_roles (user_id, role_id) VALUES (?, ?)",
+                (cur.lastrowid, role_row["id"]),
+            )
 
     if not has_table("notification_logs"):
         conn.executescript(
@@ -408,6 +514,19 @@ class NotificationUser(BaseModel):
     id: int
     name: str
     email: str
+
+
+class AuthLogin(BaseModel):
+    email: str
+    password: str
+
+
+class AuthUserOut(BaseModel):
+    id: int
+    name: str
+    email: str
+    is_admin: bool
+    roles: List[str] = Field(default_factory=list)
 
 
 class PendingAgreementCreate(BaseModel):
@@ -704,6 +823,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
 CREATE INDEX IF NOT EXISTS idx_notification_users_name
   ON notification_users(name);
 
+CREATE TABLE IF NOT EXISTS auth_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  is_admin INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_auth_users_email_lower
+  ON auth_users(lower(email));
+
+CREATE TABLE IF NOT EXISTS auth_roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_user_roles (
+  user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS notification_logs (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -777,6 +930,95 @@ CREATE VIRTUAL TABLE IF NOT EXISTS contracts_fts USING fts5(
   ocr_text
 );
 """
+
+
+# ----------------------------
+# Auth helpers
+# ----------------------------
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _load_user_roles(conn: sqlite3.Connection, user_id: int) -> List[str]:
+    rows = conn.execute(
+        """
+        SELECT r.name
+        FROM auth_roles r
+        JOIN auth_user_roles ur ON ur.role_id = r.id
+        WHERE ur.user_id = ?
+        ORDER BY r.name ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def _get_session_token(request: Request) -> Optional[str]:
+    token = request.cookies.get("session_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+    return token or None
+
+
+def _get_current_user(request: Request) -> Optional[Dict[str, Any]]:
+    token = _get_session_token(request)
+    if not token:
+        return None
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.name, u.email, u.is_admin, s.expires_at
+            FROM auth_sessions s
+            JOIN auth_users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+        expires_at = _parse_iso_datetime(row["expires_at"])
+        if expires_at:
+            now = datetime.utcnow()
+            if expires_at.tzinfo:
+                now = now.replace(tzinfo=expires_at.tzinfo)
+        if expires_at and expires_at <= now:
+            conn.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+            return None
+        roles = _load_user_roles(conn, row["id"])
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "email": row["email"],
+            "is_admin": bool(row["is_admin"]),
+            "roles": roles,
+        }
+
+
+def require_user(request: Request) -> Dict[str, Any]:
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def require_admin(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _cookie_secure_flag() -> bool:
+    value = os.environ.get("AUTH_COOKIE_SECURE", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 SEED_TERMS_SQL = r"""
 INSERT OR IGNORE INTO term_definitions (id, name, key, value_type, enabled, priority, extraction_hint, created_at) VALUES
@@ -983,6 +1225,72 @@ def _upsert_manual_term(contract_id: str, payload: TermUpsert) -> Dict[str, Any]
     }
 
 # ----------------------------
+# Auth endpoints
+# ----------------------------
+@app.post("/api/auth/login", response_model=AuthUserOut)
+def login(payload: AuthLogin, response: Response):
+    email = payload.email.strip().lower()
+    password = payload.password or ""
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, name, email, password_hash, is_admin
+            FROM auth_users
+            WHERE lower(email) = ?
+            """,
+            (email,),
+        ).fetchone()
+        if not row or not _verify_password(password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        token = secrets.token_urlsafe(32)
+        created_at = now_iso()
+        expires_at = (datetime.utcnow() + _session_ttl()).replace(microsecond=0).isoformat() + "Z"
+        conn.execute(
+            """
+            INSERT INTO auth_sessions (token, user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (token, row["id"], created_at, expires_at),
+        )
+        roles = _load_user_roles(conn, row["id"])
+
+    response.set_cookie(
+        "session_token",
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure_flag(),
+        max_age=int(_session_ttl().total_seconds()),
+    )
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "email": row["email"],
+        "is_admin": bool(row["is_admin"]),
+        "roles": roles,
+    }
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    token = _get_session_token(request)
+    if token:
+        with db() as conn:
+            conn.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+    response.delete_cookie("session_token")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me", response_model=AuthUserOut)
+def auth_me(request: Request):
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+# ----------------------------
 # Agreement types / Tags endpoints
 # ----------------------------
 @app.get("/api/agreement-types")
@@ -998,7 +1306,7 @@ def list_tags():
 
 
 @app.post("/api/tags")
-def create_tag(tag: TagCreate):
+def create_tag(tag: TagCreate, _: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         cur = conn.execute(
             "INSERT INTO tags (name, color, created_at) VALUES (?, ?, ?)",
@@ -1009,7 +1317,7 @@ def create_tag(tag: TagCreate):
 
 
 @app.put("/api/tags/{tag_id}")
-def update_tag(tag_id: int, tag: TagUpdate):
+def update_tag(tag_id: int, tag: TagUpdate, _: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         if tag.name:
             conn.execute("UPDATE tags SET name = ? WHERE id = ?", (tag.name, tag_id))
@@ -1019,7 +1327,7 @@ def update_tag(tag_id: int, tag: TagUpdate):
 
 
 @app.delete("/api/tags/{tag_id}")
-def delete_tag(tag_id: int):
+def delete_tag(tag_id: int, _: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
         return {"deleted": tag_id}
@@ -1029,7 +1337,7 @@ def delete_tag(tag_id: int):
 # Notification users
 # ----------------------------
 @app.get("/api/notification-users")
-def list_notification_users():
+def list_notification_users(_: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         rows = conn.execute(
             "SELECT id, name, email FROM notification_users ORDER BY name ASC, email ASC"
@@ -1038,7 +1346,7 @@ def list_notification_users():
 
 
 @app.post("/api/notification-users")
-def create_notification_user(payload: NotificationUserCreate):
+def create_notification_user(payload: NotificationUserCreate, _: Dict[str, Any] = Depends(require_admin)):
     name = payload.name.strip()
     email = payload.email.strip().lower()
     if not name or not email:
@@ -1059,7 +1367,7 @@ def create_notification_user(payload: NotificationUserCreate):
 
 
 @app.delete("/api/notification-users/{user_id}")
-def delete_notification_user(user_id: int):
+def delete_notification_user(user_id: int, _: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         row = conn.execute(
             "SELECT id FROM notification_users WHERE id = ?", (user_id,)
@@ -1077,6 +1385,7 @@ def list_notification_logs(
     query: str = "",
     status: str = "all",
     kind: str = "all",
+    _: Dict[str, Any] = Depends(require_admin),
 ):
     limit = max(1, min(limit, 200))
     offset = max(offset, 0)
@@ -1337,7 +1646,7 @@ def delete_pending_agreement(agreement_id: str):
 
 
 @app.get("/api/pending-agreement-reminders")
-def list_pending_agreement_reminders():
+def list_pending_agreement_reminders(_: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         rows = conn.execute(
             """
@@ -1356,7 +1665,9 @@ def list_pending_agreement_reminders():
 
 
 @app.post("/api/pending-agreement-reminders")
-def create_pending_agreement_reminder(payload: PendingAgreementReminderCreate):
+def create_pending_agreement_reminder(
+    payload: PendingAgreementReminderCreate, _: Dict[str, Any] = Depends(require_admin)
+):
     if not payload.roles and not payload.recipients:
         raise HTTPException(
             status_code=400, detail="At least one role or recipient is required"
@@ -1393,7 +1704,11 @@ def create_pending_agreement_reminder(payload: PendingAgreementReminderCreate):
 
 
 @app.put("/api/pending-agreement-reminders/{reminder_id}")
-def update_pending_agreement_reminder(reminder_id: str, payload: PendingAgreementReminderUpdate):
+def update_pending_agreement_reminder(
+    reminder_id: str,
+    payload: PendingAgreementReminderUpdate,
+    _: Dict[str, Any] = Depends(require_admin),
+):
     with db() as conn:
         row = conn.execute(
             """
@@ -1454,7 +1769,9 @@ def update_pending_agreement_reminder(reminder_id: str, payload: PendingAgreemen
 
 
 @app.delete("/api/pending-agreement-reminders/{reminder_id}")
-def delete_pending_agreement_reminder(reminder_id: str):
+def delete_pending_agreement_reminder(
+    reminder_id: str, _: Dict[str, Any] = Depends(require_admin)
+):
     with db() as conn:
         row = conn.execute(
             "SELECT id FROM pending_agreement_reminders WHERE id = ?",

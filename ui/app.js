@@ -43,6 +43,8 @@ const state = {
   notificationEventReminders: [],
   notificationPendingReminders: [],
   notificationTaskReminders: [],
+  currentUser: null,
+  authReady: false,
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -139,6 +141,119 @@ function initModal() {
       closeModal(!modalState.showCancel);
     }
   });
+}
+
+function getAuthElements() {
+  return {
+    overlay: $("authOverlay"),
+    form: $("authForm"),
+    email: $("authEmail"),
+    password: $("authPassword"),
+    error: $("authError"),
+    status: $("authStatus"),
+    loginButton: $("authLoginButton"),
+    logoutButton: $("authLogoutButton"),
+  };
+}
+
+function showAuthOverlay(message = "") {
+  const { overlay, error, email } = getAuthElements();
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  if (error) error.textContent = message;
+  if (email) email.focus();
+}
+
+function hideAuthOverlay() {
+  const { overlay, error, password } = getAuthElements();
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+  if (error) error.textContent = "";
+  if (password) password.value = "";
+}
+
+function renderAuthStatus() {
+  const { status, loginButton, logoutButton } = getAuthElements();
+  if (!status || !loginButton || !logoutButton) return;
+  if (state.currentUser) {
+    status.textContent = `Signed in as ${state.currentUser.name || state.currentUser.email}`;
+    loginButton.classList.add("hidden");
+    logoutButton.classList.remove("hidden");
+  } else {
+    status.textContent = "Not signed in";
+    loginButton.classList.remove("hidden");
+    logoutButton.classList.add("hidden");
+  }
+}
+
+async function loginUser(email, password) {
+  const res = await apiFetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  state.currentUser = await res.json();
+  renderAuthStatus();
+  hideAuthOverlay();
+  return state.currentUser;
+}
+
+async function logoutUser() {
+  await apiFetch("/api/auth/logout", { method: "POST" });
+  state.currentUser = null;
+  renderAuthStatus();
+  showAuthOverlay();
+}
+
+async function ensureAuth() {
+  if (state.authReady) return !!state.currentUser;
+  try {
+    const res = await apiFetch("/api/auth/me");
+    state.currentUser = await res.json();
+    state.authReady = true;
+    renderAuthStatus();
+    return true;
+  } catch (err) {
+    state.authReady = true;
+    state.currentUser = null;
+    renderAuthStatus();
+    showAuthOverlay();
+    return false;
+  }
+}
+
+function initAuthUi() {
+  const { form, loginButton, logoutButton, error } = getAuthElements();
+  if (loginButton) loginButton.addEventListener("click", () => showAuthOverlay());
+  if (logoutButton) {
+    logoutButton.addEventListener("click", async () => {
+      try {
+        await logoutUser();
+      } catch (err) {
+        if (error) error.textContent = err.message || "Unable to sign out.";
+      }
+    });
+  }
+  if (form) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const email = $("authEmail")?.value?.trim();
+      const password = $("authPassword")?.value || "";
+      if (!email || !password) {
+        if (error) error.textContent = "Email and password are required.";
+        return;
+      }
+      try {
+        if (error) error.textContent = "";
+        await loginUser(email, password);
+        await loadAppData();
+      } catch (err) {
+        if (error) error.textContent = err.message || "Unable to sign in.";
+      }
+    });
+  }
 }
 
 function getPendingReminderModalElements() {
@@ -500,7 +615,14 @@ function timestampForFilename() {
 async function apiFetch(path, opts = {}) {
   const base = getApiBase();
   const url = `${base}${path}`;
-  const res = await fetch(url, opts);
+  const options = { ...opts };
+  if (!options.credentials) {
+    options.credentials = "include";
+  }
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    showAuthOverlay();
+  }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try {
@@ -3409,15 +3531,14 @@ $("navOutputs")?.addEventListener("click", () => showPage("outputs"));
 $("saveApi").addEventListener("click", async () => {
   setApiBase($("apiBase").value.trim());
   setApiUi();
-  await testApi();
-  await loadReferenceData();
-  await loadRecent();
+  await loadAppData();
 });
 
 $("refresh").addEventListener("click", loadRecent);
 
 setApiUi();
 initModal();
+initAuthUi();
 initDropzone();
 initEventsUi();
 initPlannerUi();
@@ -3430,8 +3551,20 @@ initPreviewFullscreen();
 initGuidedTours();
 showPage("contracts");
 
-testApi()
-  .then(loadReferenceData)
-  .then(loadRecent)
-  .then(loadEvents)
-  .catch((e) => console.error(e));
+async function loadAppData() {
+  await testApi();
+  await loadReferenceData();
+  await loadRecent();
+  await loadEvents();
+}
+
+(async () => {
+  try {
+    const authed = await ensureAuth();
+    if (authed) {
+      await loadAppData();
+    }
+  } catch (e) {
+    console.error(e);
+  }
+})();
