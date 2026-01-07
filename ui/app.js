@@ -44,8 +44,13 @@ const state = {
   notificationEventReminders: [],
   notificationPendingReminders: [],
   notificationTaskReminders: [],
+  adminUsers: [],
+  tagPermissions: {},
+  adminUserEditId: null,
+  adminRoleEditId: null,
   currentUser: null,
   authReady: false,
+  authRequired: false,
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -178,14 +183,20 @@ function hideAuthOverlay() {
 function renderAuthStatus() {
   const { status, loginButton, logoutButton } = getAuthElements();
   if (!status || !loginButton || !logoutButton) return;
-  if (state.currentUser) {
-    status.textContent = `Signed in as ${state.currentUser.name || state.currentUser.email}`;
+  const currentUser = state.currentUser?.user || state.currentUser;
+  if (currentUser) {
+    status.textContent = `Signed in as ${currentUser.name || currentUser.email}`;
     loginButton.classList.add("hidden");
     logoutButton.classList.remove("hidden");
   } else {
     status.textContent = "Not signed in";
     loginButton.classList.remove("hidden");
     logoutButton.classList.add("hidden");
+  }
+  const adminButton = $("navAdmin");
+  if (adminButton) {
+    const isAdmin = !state.authRequired || (currentUser && currentUser.roles?.includes("admin"));
+    adminButton.classList.toggle("hidden", !isAdmin);
   }
 }
 
@@ -212,13 +223,16 @@ async function ensureAuth() {
   if (state.authReady) return !!state.currentUser;
   try {
     const res = await apiFetch("/api/auth/me");
-    state.currentUser = await res.json();
+    const data = await res.json();
+    state.currentUser = data.user;
+    state.authRequired = Boolean(data.auth_required);
     state.authReady = true;
     renderAuthStatus();
-    return true;
+    return Boolean(data.user) || !data.auth_required;
   } catch (err) {
     state.authReady = true;
     state.currentUser = null;
+    state.authRequired = true;
     renderAuthStatus();
     showAuthOverlay();
     return false;
@@ -635,6 +649,15 @@ async function apiFetch(path, opts = {}) {
   return res;
 }
 
+async function fetchOptionalJson(path, fallback) {
+  try {
+    const res = await apiFetch(path);
+    return await res.json();
+  } catch (err) {
+    return fallback;
+  }
+}
+
 async function createNotificationUser(payload) {
   const res = await apiFetch("/api/notification-users", {
     method: "POST",
@@ -646,6 +669,65 @@ async function createNotificationUser(payload) {
 
 async function deleteNotificationUser(userId) {
   await apiFetch(`/api/notification-users/${userId}`, { method: "DELETE" });
+}
+
+async function fetchAdminUsers() {
+  const res = await apiFetch("/api/admin/users");
+  return res.json();
+}
+
+async function createAdminUser(payload) {
+  const res = await apiFetch("/api/admin/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function updateAdminUser(userId, payload) {
+  const res = await apiFetch(`/api/admin/users/${userId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function createRole(payload) {
+  const res = await apiFetch("/api/roles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function updateRole(roleId, payload) {
+  const res = await apiFetch(`/api/roles/${roleId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function deleteRole(roleId) {
+  await apiFetch(`/api/roles/${roleId}`, { method: "DELETE" });
+}
+
+async function fetchTagPermissions() {
+  const res = await apiFetch("/api/tag-permissions");
+  return res.json();
+}
+
+async function updateTagPermissions(tagId, roles) {
+  const res = await apiFetch(`/api/tag-permissions/${tagId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ roles }),
+  });
+  return res.json();
 }
 
 async function fetchNotificationLogs({ query = "", status = "all", kind = "all", limit = 40, offset = 0 } = {}) {
@@ -835,18 +917,20 @@ async function testApi() {
 }
 
 async function loadReferenceData() {
-  const [defsRes, tagsRes, agRes, usersRes, rolesRes] = await Promise.all([
+  const [defsRes, tagsRes, agRes] = await Promise.all([
     apiFetch("/api/terms/definitions"),
     apiFetch("/api/tags"),
     apiFetch("/api/agreement-types"),
-    apiFetch("/api/notification-users"),
-    apiFetch("/api/roles"),
+  ]);
+  const [notificationUsers, roles] = await Promise.all([
+    fetchOptionalJson("/api/notification-users", []),
+    fetchOptionalJson("/api/roles", []),
   ]);
   state.definitions = await defsRes.json();
   state.tags = await tagsRes.json();
   state.agreementTypes = await agRes.json();
-  state.notificationUsers = await usersRes.json();
-  state.roles = await rolesRes.json();
+  state.notificationUsers = notificationUsers;
+  state.roles = roles;
   renderAllContractsFilters();
   renderNotificationOptions();
   renderPendingReminderTable();
@@ -2135,6 +2219,275 @@ function renderUserDirectories() {
   });
 }
 
+function resetAdminUserForm() {
+  state.adminUserEditId = null;
+  const name = $("adminUserName");
+  const email = $("adminUserEmail");
+  const password = $("adminUserPassword");
+  const isActive = $("adminUserActive");
+  const isAdmin = $("adminUserAdmin");
+  if (name) name.value = "";
+  if (email) email.value = "";
+  if (password) password.value = "";
+  if (isActive) isActive.checked = true;
+  if (isAdmin) isAdmin.checked = false;
+  renderCheckboxList("adminUserRoles", state.roles, []);
+  $("adminUserSave")?.setAttribute("data-mode", "create");
+  $("adminUserSave")?.textContent = "Add user";
+  const status = $("adminUserStatus");
+  if (status) status.textContent = "";
+}
+
+function openAdminUserEdit(user) {
+  state.adminUserEditId = user.id;
+  const name = $("adminUserName");
+  const email = $("adminUserEmail");
+  const password = $("adminUserPassword");
+  const isActive = $("adminUserActive");
+  const isAdmin = $("adminUserAdmin");
+  if (name) name.value = user.name || "";
+  if (email) email.value = user.email || "";
+  if (password) password.value = "";
+  if (isActive) isActive.checked = Boolean(user.is_active);
+  if (isAdmin) isAdmin.checked = Boolean(user.is_admin);
+  renderCheckboxList("adminUserRoles", state.roles, user.role_ids || []);
+  $("adminUserSave")?.setAttribute("data-mode", "edit");
+  $("adminUserSave")?.textContent = "Update user";
+  const status = $("adminUserStatus");
+  if (status) status.textContent = `Editing ${user.name || user.email}`;
+}
+
+function renderAdminUsers() {
+  const tbody = $("adminUsersTable");
+  if (!tbody) return;
+  if (!state.adminUsers.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="muted small">No users found.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.adminUsers
+    .map((user) => {
+      const roles = formatRoleList(user.role_ids || [], "None");
+      return `
+        <tr>
+          <td>${escapeHtml(user.name || "")}</td>
+          <td>${escapeHtml(user.email || "")}</td>
+          <td class="small">${escapeHtml(roles)}</td>
+          <td>${user.is_admin ? "Yes" : "No"}</td>
+          <td>${user.is_active ? "Active" : "Inactive"}</td>
+          <td><button class="small admin-user-edit" data-user-id="${user.id}">Edit</button></td>
+        </tr>
+      `;
+    })
+    .join("");
+  document.querySelectorAll(".admin-user-edit").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const userId = Number(btn.dataset.userId);
+      const user = state.adminUsers.find((item) => item.id === userId);
+      if (user) openAdminUserEdit(user);
+    });
+  });
+}
+
+function resetAdminRoleForm() {
+  state.adminRoleEditId = null;
+  const name = $("adminRoleName");
+  const description = $("adminRoleDescription");
+  if (name) name.value = "";
+  if (description) description.value = "";
+  $("adminRoleSave")?.setAttribute("data-mode", "create");
+  $("adminRoleSave")?.textContent = "Add role";
+  const status = $("adminRoleStatus");
+  if (status) status.textContent = "";
+}
+
+function openAdminRoleEdit(role) {
+  state.adminRoleEditId = role.id;
+  const name = $("adminRoleName");
+  const description = $("adminRoleDescription");
+  if (name) name.value = role.name || "";
+  if (description) description.value = role.description || "";
+  $("adminRoleSave")?.setAttribute("data-mode", "edit");
+  $("adminRoleSave")?.textContent = "Update role";
+  const status = $("adminRoleStatus");
+  if (status) status.textContent = `Editing ${role.name}`;
+}
+
+function renderAdminRoles() {
+  const tbody = $("adminRolesTable");
+  if (!tbody) return;
+  if (!state.roles.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted small">No roles found.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.roles
+    .map((role) => {
+      return `
+        <tr>
+          <td>${escapeHtml(role.name || "")}</td>
+          <td class="small">${escapeHtml(role.description || "—")}</td>
+          <td><button class="small admin-role-edit" data-role-id="${role.id}">Edit</button></td>
+          <td><button class="small danger admin-role-delete" data-role-id="${role.id}">Delete</button></td>
+        </tr>
+      `;
+    })
+    .join("");
+  document.querySelectorAll(".admin-role-edit").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const roleId = Number(btn.dataset.roleId);
+      const role = state.roles.find((item) => item.id === roleId);
+      if (role) openAdminRoleEdit(role);
+    });
+  });
+  document.querySelectorAll(".admin-role-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const roleId = Number(btn.dataset.roleId);
+      const role = state.roles.find((item) => item.id === roleId);
+      const confirmed = await showConfirm(
+        `Delete role ${role?.name || roleId}? This will remove it from users and tags.`,
+      );
+      if (!confirmed) return;
+      await deleteRole(roleId);
+      await loadAdminData();
+    });
+  });
+}
+
+function renderAdminTagPermissions() {
+  const tbody = $("adminTagPermissionsTable");
+  if (!tbody) return;
+  if (!state.tags.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="muted small">No tags available.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.tags
+    .map((tag) => {
+      const assigned = new Set(
+        (state.tagPermissions[String(tag.id)] || state.tagPermissions[tag.id] || []).map(String),
+      );
+      const rolesHtml = state.roles.length
+        ? state.roles
+            .map((role) => {
+              const checked = assigned.has(String(role.id));
+              return `
+                <label class="inline small" style="gap:6px;">
+                  <input type="checkbox" value="${role.id}" ${checked ? "checked" : ""} />
+                  <span>${escapeHtml(role.name || "")}</span>
+                </label>
+              `;
+            })
+            .join("")
+        : `<div class="muted small">No roles available.</div>`;
+      return `
+        <tr>
+          <td>${renderTagPill(tag)}</td>
+          <td><div id="tagPermRoles-${tag.id}" class="row wrap">${rolesHtml}</div></td>
+          <td><button class="small admin-tag-save" data-tag-id="${tag.id}">Save</button></td>
+        </tr>
+      `;
+    })
+    .join("");
+  document.querySelectorAll(".admin-tag-save").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tagId = Number(btn.dataset.tagId);
+      const roles = getCheckedValues(`tagPermRoles-${tagId}`).map((value) => Number(value));
+      await updateTagPermissions(tagId, roles);
+      state.tagPermissions[String(tagId)] = roles;
+      const status = $("adminTagStatus");
+      if (status) status.textContent = "Permissions saved.";
+      setTimeout(() => {
+        if (status && status.textContent === "Permissions saved.") {
+          status.textContent = "";
+        }
+      }, 2000);
+    });
+  });
+}
+
+async function loadAdminData() {
+  const [users, roles, tags, permissions] = await Promise.all([
+    fetchAdminUsers(),
+    apiFetch("/api/roles").then((res) => res.json()),
+    apiFetch("/api/tags").then((res) => res.json()),
+    fetchTagPermissions(),
+  ]);
+  state.adminUsers = users;
+  state.roles = roles;
+  state.tags = tags;
+  state.tagPermissions = permissions || {};
+  renderAdminUsers();
+  renderAdminRoles();
+  renderAdminTagPermissions();
+  resetAdminUserForm();
+  resetAdminRoleForm();
+}
+
+function initAdminUi() {
+  $("adminRefresh")?.addEventListener("click", loadAdminData);
+  $("adminUserCancel")?.addEventListener("click", resetAdminUserForm);
+  $("adminRoleCancel")?.addEventListener("click", resetAdminRoleForm);
+
+  $("adminUserSave")?.addEventListener("click", async () => {
+    const name = $("adminUserName")?.value.trim() || "";
+    const email = $("adminUserEmail")?.value.trim() || "";
+    const password = $("adminUserPassword")?.value || "";
+    const isActive = $("adminUserActive")?.checked ?? true;
+    const isAdmin = $("adminUserAdmin")?.checked ?? false;
+    const roles = getCheckedValues("adminUserRoles").map((value) => Number(value));
+    const status = $("adminUserStatus");
+
+    if (!name || !email || (!state.adminUserEditId && !password)) {
+      if (status) status.textContent = "Name, email, and password are required for new users.";
+      return;
+    }
+    try {
+      if (state.adminUserEditId) {
+        await updateAdminUser(state.adminUserEditId, {
+          name,
+          email,
+          password: password || undefined,
+          roles,
+          is_active: isActive,
+          is_admin: isAdmin,
+        });
+      } else {
+        await createAdminUser({
+          name,
+          email,
+          password,
+          roles,
+          is_active: isActive,
+          is_admin: isAdmin,
+        });
+      }
+      await loadAdminData();
+      if (status) status.textContent = "User saved.";
+    } catch (err) {
+      if (status) status.textContent = err.message || "Unable to save user.";
+    }
+  });
+
+  $("adminRoleSave")?.addEventListener("click", async () => {
+    const name = $("adminRoleName")?.value.trim() || "";
+    const description = $("adminRoleDescription")?.value.trim() || "";
+    const status = $("adminRoleStatus");
+    if (!name) {
+      if (status) status.textContent = "Role name is required.";
+      return;
+    }
+    try {
+      if (state.adminRoleEditId) {
+        await updateRole(state.adminRoleEditId, { name, description });
+      } else {
+        await createRole({ name, description });
+      }
+      await loadAdminData();
+      if (status) status.textContent = "Role saved.";
+    } catch (err) {
+      if (status) status.textContent = err.message || "Unable to save role.";
+    }
+  });
+}
+
 function renderNotificationOptions() {
   renderCheckboxList("pendingRoleOptions", state.roles);
   renderCheckboxList("pendingRecipientOptions", state.notificationUsers);
@@ -3048,6 +3401,7 @@ function showPage(page) {
     "pendingAgreements",
     "tasks",
     "notifications",
+    "admin",
     "outputs",
   ];
   closeTour();
@@ -3069,6 +3423,9 @@ function showPage(page) {
   if (page === "notifications") {
     loadNotificationOverview();
     loadNotificationLogs({ reset: true });
+  }
+  if (page === "admin") {
+    loadAdminData();
   }
 }
 
@@ -3554,6 +3911,7 @@ $("navPlanner")?.addEventListener("click", () => showPage("planner"));
 $("navPendingAgreements")?.addEventListener("click", () => showPage("pendingAgreements"));
 $("navTasks")?.addEventListener("click", () => showPage("tasks"));
 $("navNotifications")?.addEventListener("click", () => showPage("notifications"));
+$("navAdmin")?.addEventListener("click", () => showPage("admin"));
 $("navOutputs")?.addEventListener("click", () => showPage("outputs"));
 
 $("saveApi").addEventListener("click", async () => {
@@ -3577,6 +3935,7 @@ initAllContractsUi();
 initThemeToggle();
 initPreviewFullscreen();
 initGuidedTours();
+initAdminUi();
 showPage("contracts");
 
 async function loadAppData() {
