@@ -427,6 +427,10 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     admin_email = _env_first("ADMIN_EMAIL", "CONTRACT_ADMIN_EMAIL").strip().lower()
     admin_password = _env_first("ADMIN_PASSWORD", "CONTRACT_ADMIN_PASSWORD").strip()
     admin_name = _env_first("ADMIN_NAME", "CONTRACT_ADMIN_NAME") or "Admin"
+    if not admin_email:
+        admin_email = "admin@local.com"
+    if not admin_password:
+        admin_password = "password"
     if admin_email and admin_password:
         row = conn.execute(
             "SELECT id FROM auth_users WHERE lower(email) = ?",
