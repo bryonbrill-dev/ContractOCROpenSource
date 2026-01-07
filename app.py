@@ -193,6 +193,65 @@ def safe_json_list(value: Optional[str]) -> List[str]:
     return []
 
 
+def safe_json_int_list(value: Optional[str]) -> List[int]:
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        cleaned: List[int] = []
+        for item in data:
+            try:
+                cleaned.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return cleaned
+    return []
+
+
+def _get_user_role_ids(conn: sqlite3.Connection, user_id: int) -> List[int]:
+    rows = conn.execute(
+        "SELECT role_id FROM auth_user_roles WHERE user_id = ?",
+        (user_id,),
+    ).fetchall()
+    return [row["role_id"] for row in rows]
+
+
+def _validate_role_ids(conn: sqlite3.Connection, role_ids: List[int]) -> List[int]:
+    if not role_ids:
+        return []
+    unique_ids = sorted(set(role_ids))
+    placeholders = ",".join("?" for _ in unique_ids)
+    rows = conn.execute(
+        f"SELECT id FROM auth_roles WHERE id IN ({placeholders})",
+        tuple(unique_ids),
+    ).fetchall()
+    found = {row["id"] for row in rows}
+    missing = [role_id for role_id in unique_ids if role_id not in found]
+    if missing:
+        missing_list = ", ".join(str(role_id) for role_id in missing)
+        raise HTTPException(status_code=400, detail=f"Unknown role id(s): {missing_list}")
+    return unique_ids
+
+
+def _load_role_recipients(conn: sqlite3.Connection, role_ids: List[int]) -> List[str]:
+    if not role_ids:
+        return []
+    placeholders = ",".join("?" for _ in role_ids)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT u.email
+        FROM auth_users u
+        JOIN auth_user_roles ur ON ur.user_id = u.id
+        WHERE u.is_active = 1 AND ur.role_id IN ({placeholders})
+        """,
+        tuple(role_ids),
+    ).fetchall()
+    return [row["email"] for row in rows if row["email"]]
+
+
 def _env_bool(key: str, default: bool = False) -> bool:
     raw = os.environ.get(key)
     if raw is None:
@@ -281,6 +340,20 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_contracts_original_filename ON contracts(original_filename)"
     )
 
+    if not has_table("tag_roles"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tag_roles (
+              tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+              role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (tag_id, role_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tag_roles_tag ON tag_roles(tag_id);
+            CREATE INDEX IF NOT EXISTS idx_tag_roles_role ON tag_roles(role_id);
+            """
+        )
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS notification_users (
@@ -354,6 +427,10 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     admin_email = _env_first("ADMIN_EMAIL", "CONTRACT_ADMIN_EMAIL").strip().lower()
     admin_password = _env_first("ADMIN_PASSWORD", "CONTRACT_ADMIN_PASSWORD").strip()
     admin_name = _env_first("ADMIN_NAME", "CONTRACT_ADMIN_NAME") or "Admin"
+    if not admin_email:
+        admin_email = "admin@local.com"
+    if not admin_password:
+        admin_password = "password"
     if admin_email and admin_password:
         row = conn.execute(
             "SELECT id FROM auth_users WHERE lower(email) = ?",
@@ -624,18 +701,24 @@ class PendingAgreementAction(BaseModel):
 
 class PendingAgreementReminderCreate(BaseModel):
     frequency: str
-    roles: List[str] = Field(default_factory=list)
+    roles: List[int] = Field(default_factory=list)
     recipients: List[str] = Field(default_factory=list)
     message: Optional[str] = None
 
     @validator("roles", "recipients", pre=True)
-    def normalize_list(cls, value):
+    def normalize_list(cls, value, field):
         if value is None:
             return []
         if isinstance(value, str):
             value = value.split(",")
         if isinstance(value, (list, tuple)):
-            return [str(v).strip() for v in value if str(v).strip()]
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            if field.name == "roles":
+                try:
+                    return [int(v) for v in cleaned]
+                except ValueError as exc:
+                    raise ValueError("role IDs must be integers") from exc
+            return cleaned
         return []
 
     @validator("frequency", pre=True)
@@ -651,18 +734,24 @@ class PendingAgreementReminderCreate(BaseModel):
 
 class PendingAgreementReminderUpdate(BaseModel):
     frequency: Optional[str] = None
-    roles: Optional[List[str]] = None
+    roles: Optional[List[int]] = None
     recipients: Optional[List[str]] = None
     message: Optional[str] = None
 
     @validator("roles", "recipients", pre=True)
-    def normalize_list(cls, value):
+    def normalize_list(cls, value, field):
         if value is None:
             return None
         if isinstance(value, str):
             value = value.split(",")
         if isinstance(value, (list, tuple)):
-            return [str(v).strip() for v in value if str(v).strip()]
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            if field.name == "roles":
+                try:
+                    return [int(v) for v in cleaned]
+                except ValueError as exc:
+                    raise ValueError("role IDs must be integers") from exc
+            return cleaned
         return []
 
     @validator("frequency", pre=True)
@@ -768,6 +857,15 @@ CREATE TABLE IF NOT EXISTS contract_tags (
   created_at TEXT NOT NULL,
   PRIMARY KEY (contract_id, tag_id)
 );
+
+CREATE TABLE IF NOT EXISTS tag_roles (
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (tag_id, role_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tag_roles_tag ON tag_roles(tag_id);
+CREATE INDEX IF NOT EXISTS idx_tag_roles_role ON tag_roles(role_id);
 
 CREATE TABLE IF NOT EXISTS tag_keywords (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1385,6 +1483,16 @@ def delete_tag(tag_id: int, _: Dict[str, Any] = Depends(require_admin)):
 
 
 # ----------------------------
+# Role endpoints
+# ----------------------------
+@app.get("/api/roles")
+def list_roles(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        rows = conn.execute("SELECT id, name FROM auth_roles ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+
+
+# ----------------------------
 # Auth endpoints
 # ----------------------------
 @app.post("/api/auth/login")
@@ -1758,7 +1866,7 @@ def list_pending_agreement_reminders(_: Dict[str, Any] = Depends(require_admin))
         items = []
         for row in rows:
             item = dict(row)
-            item["roles"] = safe_json_list(item.pop("roles_json", None))
+            item["roles"] = safe_json_int_list(item.pop("roles_json", None))
             item["recipients"] = safe_json_list(item.pop("recipients_json", None))
             items.append(item)
         return items
@@ -1777,6 +1885,7 @@ def create_pending_agreement_reminder(
     reminder_id = str(uuid.uuid4())
     created_at = now_iso()
     with db() as conn:
+        role_ids = _validate_role_ids(conn, payload.roles)
         conn.execute(
             """
             INSERT INTO pending_agreement_reminders
@@ -1786,7 +1895,7 @@ def create_pending_agreement_reminder(
             (
                 reminder_id,
                 payload.frequency,
-                json.dumps(payload.roles or []),
+                json.dumps(role_ids),
                 json.dumps(payload.recipients or []),
                 payload.message,
                 created_at,
@@ -1796,7 +1905,7 @@ def create_pending_agreement_reminder(
     return {
         "id": reminder_id,
         "frequency": payload.frequency,
-        "roles": payload.roles,
+        "roles": role_ids,
         "recipients": payload.recipients,
         "message": payload.message,
         "created_at": created_at,
@@ -1822,7 +1931,7 @@ def update_pending_agreement_reminder(
             raise HTTPException(status_code=404, detail="Reminder rule not found")
 
         frequency = row["frequency"]
-        roles = safe_json_list(row["roles_json"])
+        roles = safe_json_int_list(row["roles_json"])
         recipients = safe_json_list(row["recipients_json"])
         message = row["message"]
 
@@ -1831,7 +1940,7 @@ def update_pending_agreement_reminder(
                 raise HTTPException(status_code=400, detail="frequency cannot be empty")
             frequency = payload.frequency
         if payload.roles is not None:
-            roles = payload.roles
+            roles = _validate_role_ids(conn, payload.roles)
         if payload.recipients is not None:
             recipients = payload.recipients
         if payload.message is not None:
@@ -2309,6 +2418,45 @@ def get_calendar_events(start: str, end: str):
         return events
 
 # ----------------------------
+# Contract visibility helpers
+# ----------------------------
+def _filter_contract_visibility(
+    conn: sqlite3.Connection,
+    contract_ids: List[str],
+    user_role_ids: List[int],
+) -> List[str]:
+    if not contract_ids:
+        return []
+    placeholders = ",".join("?" for _ in contract_ids)
+    restricted_rows = conn.execute(
+        f"""
+        SELECT DISTINCT ct.contract_id
+        FROM contract_tags ct
+        JOIN tag_roles tr ON tr.tag_id = ct.tag_id
+        WHERE ct.contract_id IN ({placeholders})
+        """,
+        tuple(contract_ids),
+    ).fetchall()
+    restricted_ids = {row["contract_id"] for row in restricted_rows}
+    if not restricted_ids:
+        return contract_ids
+    if not user_role_ids:
+        return [cid for cid in contract_ids if cid not in restricted_ids]
+    role_placeholders = ",".join("?" for _ in user_role_ids)
+    visible_rows = conn.execute(
+        f"""
+        SELECT DISTINCT ct.contract_id
+        FROM contract_tags ct
+        JOIN tag_roles tr ON tr.tag_id = ct.tag_id
+        WHERE ct.contract_id IN ({placeholders})
+          AND tr.role_id IN ({role_placeholders})
+        """,
+        tuple(contract_ids) + tuple(user_role_ids),
+    ).fetchall()
+    visible_ids = {row["contract_id"] for row in visible_rows}
+    return [cid for cid in contract_ids if cid not in restricted_ids or cid in visible_ids]
+
+# ----------------------------
 # List contracts
 # ----------------------------
 @app.get("/api/contracts")
@@ -2320,6 +2468,7 @@ def list_contracts(
     q: Optional[str] = None,
     mode: Optional[Literal["quick", "fulltext"]] = "quick",
     include_tags: bool = True,
+    request: Request = None,
 ):
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
@@ -2385,6 +2534,15 @@ def list_contracts(
             ).fetchall()
 
         result = [dict(r) for r in rows]
+        user_role_ids: List[int] = []
+        if request is not None:
+            user = get_current_user(request)
+            if user:
+                user_role_ids = _get_user_role_ids(conn, user["id"])
+        if result:
+            contract_ids = [item["id"] for item in result]
+            visible_ids = set(_filter_contract_visibility(conn, contract_ids, user_role_ids))
+            result = [item for item in result if item["id"] in visible_ids]
         if not include_tags:
             return result
 
@@ -3350,7 +3508,11 @@ def send_pending_agreement_reminders(date_str: Optional[str] = None):
             if not _should_send_frequency(reminder["frequency"], reference_date):
                 skipped += 1
                 continue
-            recipients = _parse_email_list(safe_json_list(reminder["recipients_json"]))
+            role_ids = safe_json_int_list(reminder["roles_json"])
+            role_recipients = _load_role_recipients(conn, role_ids)
+            recipients = _parse_email_list(
+                safe_json_list(reminder["recipients_json"]) + role_recipients
+            )
             if not recipients:
                 skipped += 1
                 continue
