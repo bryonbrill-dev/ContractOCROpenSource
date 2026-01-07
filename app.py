@@ -12,6 +12,8 @@ import smtplib
 import sqlite3
 import logging
 import traceback
+import secrets
+import hmac
 from datetime import datetime, date, timedelta
 from email.message import EmailMessage
 from typing import Optional, List, Literal, Dict, Any
@@ -854,6 +856,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
 CREATE INDEX IF NOT EXISTS idx_notification_users_name
   ON notification_users(name);
 
+CREATE TABLE IF NOT EXISTS auth_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  is_admin INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_auth_users_email_lower
+  ON auth_users(lower(email));
+
+CREATE TABLE IF NOT EXISTS auth_roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_user_roles (
+  user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS notification_logs (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -927,6 +963,95 @@ CREATE VIRTUAL TABLE IF NOT EXISTS contracts_fts USING fts5(
   ocr_text
 );
 """
+
+
+# ----------------------------
+# Auth helpers
+# ----------------------------
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _load_user_roles(conn: sqlite3.Connection, user_id: int) -> List[str]:
+    rows = conn.execute(
+        """
+        SELECT r.name
+        FROM auth_roles r
+        JOIN auth_user_roles ur ON ur.role_id = r.id
+        WHERE ur.user_id = ?
+        ORDER BY r.name ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def _get_session_token(request: Request) -> Optional[str]:
+    token = request.cookies.get("session_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+    return token or None
+
+
+def _get_current_user(request: Request) -> Optional[Dict[str, Any]]:
+    token = _get_session_token(request)
+    if not token:
+        return None
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.name, u.email, u.is_admin, s.expires_at
+            FROM auth_sessions s
+            JOIN auth_users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+        expires_at = _parse_iso_datetime(row["expires_at"])
+        if expires_at:
+            now = datetime.utcnow()
+            if expires_at.tzinfo:
+                now = now.replace(tzinfo=expires_at.tzinfo)
+        if expires_at and expires_at <= now:
+            conn.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+            return None
+        roles = _load_user_roles(conn, row["id"])
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "email": row["email"],
+            "is_admin": bool(row["is_admin"]),
+            "roles": roles,
+        }
+
+
+def require_user(request: Request) -> Dict[str, Any]:
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def require_admin(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _cookie_secure_flag() -> bool:
+    value = os.environ.get("AUTH_COOKIE_SECURE", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 SEED_TERMS_SQL = r"""
 INSERT OR IGNORE INTO term_definitions (id, name, key, value_type, enabled, priority, extraction_hint, created_at) VALUES
@@ -1360,6 +1485,7 @@ def list_notification_logs(
     query: str = "",
     status: str = "all",
     kind: str = "all",
+    _: Dict[str, Any] = Depends(require_admin),
 ):
     limit = max(1, min(limit, 200))
     offset = max(offset, 0)

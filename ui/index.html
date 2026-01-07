@@ -160,6 +160,7 @@
     .queue-fullscreen { overflow: hidden; }
     .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .theme-toggle { display: inline-flex; align-items: center; gap: 8px; }
+    .auth-bar { display: inline-flex; align-items: center; gap: 8px; }
     .theme-toggle button { background: #ffffff; color: #0b3a6f; border-color: #0b3a6f; }
     .theme-toggle button:hover { background: #f28c28; border-color: #f28c28; color: #ffffff; }
     body.theme-dark .card { background: #111827; border-color: #1f2937; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.35); }
@@ -188,14 +189,26 @@
     body.theme-dark #modalOverlay .text-slate-400 { color: #cbd5f5; }
     body.theme-dark #modalOverlay .border-slate-200 { border-color: #1f2937; }
     body.theme-dark #modalOverlay .hover\:bg-slate-50:hover { background: #1e293b; }
+    body.theme-dark #authOverlay .bg-white { background: #0f172a; border-color: #1f2937; }
+    body.theme-dark #authOverlay .text-slate-900 { color: #e2e8f0; }
+    body.theme-dark #authOverlay .text-slate-600 { color: #94a3b8; }
+    body.theme-dark #authOverlay .text-slate-400 { color: #cbd5f5; }
+    body.theme-dark #authOverlay .border-slate-200 { border-color: #1f2937; }
   </style>
 </head>
 <body>
   <div class="top-bar">
     <h2>ContractOCR</h2>
-    <div class="theme-toggle">
-      <span class="small muted" id="themeLabel">Theme: Light</span>
-      <button id="themeToggle" type="button">Switch to Dark Theme</button>
+    <div class="inline" style="gap:16px;">
+      <div class="auth-bar">
+        <span class="small muted" id="authStatus">Not signed in</span>
+        <button id="authLoginButton" type="button">Sign in</button>
+        <button id="authLogoutButton" type="button" class="hidden">Sign out</button>
+      </div>
+      <div class="theme-toggle">
+        <span class="small muted" id="themeLabel">Theme: Light</span>
+        <button id="themeToggle" type="button">Switch to Dark Theme</button>
+      </div>
     </div>
   </div>
 
@@ -1119,6 +1132,28 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
         <button id="modalCancel" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
         <button id="modalConfirm" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Confirm</button>
       </div>
+    </div>
+  </div>
+
+  <div id="authOverlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4" aria-hidden="true">
+    <div class="bg-white w-full max-w-sm rounded-2xl border border-slate-200 p-6 shadow-xl">
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg font-semibold text-slate-900">Sign in</h3>
+      </div>
+      <form id="authForm" class="mt-4" autocomplete="off">
+        <label class="small" style="display:block; margin-bottom:8px;">
+          <span>Email</span>
+          <input id="authEmail" class="muted-input" type="email" placeholder="name@company.com" required />
+        </label>
+        <label class="small" style="display:block; margin-bottom:8px;">
+          <span>Password</span>
+          <input id="authPassword" class="muted-input" type="password" placeholder="••••••••" required />
+        </label>
+        <div class="muted small" id="authError"></div>
+        <div class="inline" style="justify-content:flex-end; margin-top:12px;">
+          <button id="authSubmit" type="submit">Sign in</button>
+        </div>
+      </form>
     </div>
   </div>
 
