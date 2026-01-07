@@ -156,6 +156,48 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
 CREATE INDEX IF NOT EXISTS idx_notification_users_name ON notification_users(name);
 
 -- =========================
+-- Authentication + roles
+-- =========================
+CREATE TABLE IF NOT EXISTS auth_users (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  email         TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_auth_users_email_lower
+  ON auth_users(lower(email));
+
+CREATE TABLE IF NOT EXISTS auth_roles (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_user_roles (
+  user_id       INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  role_id       INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+  created_at    TEXT NOT NULL,
+  PRIMARY KEY (user_id, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_user_roles_user ON auth_user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_user_roles_role ON auth_user_roles(role_id);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id            TEXT PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  created_at    TEXT NOT NULL,
+  expires_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
+-- =========================
 -- Notification delivery logs
 -- =========================
 CREATE TABLE IF NOT EXISTS notification_logs (
