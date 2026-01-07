@@ -705,28 +705,20 @@ class PendingAgreementReminderCreate(BaseModel):
     recipients: List[str] = Field(default_factory=list)
     message: Optional[str] = None
 
-    @validator("roles", pre=True)
-    def normalize_roles(cls, value):
+    @validator("roles", "recipients", pre=True)
+    def normalize_list(cls, value, field):
         if value is None:
             return []
         if isinstance(value, str):
             value = value.split(",")
         if isinstance(value, (list, tuple)):
             cleaned = [str(v).strip() for v in value if str(v).strip()]
-            try:
-                return [int(v) for v in cleaned]
-            except ValueError as exc:
-                raise ValueError("role IDs must be integers") from exc
-        return []
-
-    @validator("recipients", pre=True)
-    def normalize_recipients(cls, value):
-        if value is None:
-            return []
-        if isinstance(value, str):
-            value = value.split(",")
-        if isinstance(value, (list, tuple)):
-            return [str(v).strip() for v in value if str(v).strip()]
+            if field.name == "roles":
+                try:
+                    return [int(v) for v in cleaned]
+                except ValueError as exc:
+                    raise ValueError("role IDs must be integers") from exc
+            return cleaned
         return []
 
     @validator("frequency", pre=True)
@@ -746,28 +738,20 @@ class PendingAgreementReminderUpdate(BaseModel):
     recipients: Optional[List[str]] = None
     message: Optional[str] = None
 
-    @validator("roles", pre=True)
-    def normalize_roles(cls, value):
+    @validator("roles", "recipients", pre=True)
+    def normalize_list(cls, value, field):
         if value is None:
             return None
         if isinstance(value, str):
             value = value.split(",")
         if isinstance(value, (list, tuple)):
             cleaned = [str(v).strip() for v in value if str(v).strip()]
-            try:
-                return [int(v) for v in cleaned]
-            except ValueError as exc:
-                raise ValueError("role IDs must be integers") from exc
-        return []
-
-    @validator("recipients", pre=True)
-    def normalize_recipients(cls, value):
-        if value is None:
-            return None
-        if isinstance(value, str):
-            value = value.split(",")
-        if isinstance(value, (list, tuple)):
-            return [str(v).strip() for v in value if str(v).strip()]
+            if field.name == "roles":
+                try:
+                    return [int(v) for v in cleaned]
+                except ValueError as exc:
+                    raise ValueError("role IDs must be integers") from exc
+            return cleaned
         return []
 
     @validator("frequency", pre=True)
