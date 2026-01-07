@@ -6,6 +6,8 @@ import os
 import json
 import uuid
 import hashlib
+import hmac
+import secrets
 import smtplib
 import sqlite3
 import logging
@@ -16,7 +18,7 @@ from datetime import datetime, date, timedelta
 from email.message import EmailMessage
 from typing import Optional, List, Literal, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
@@ -191,31 +193,57 @@ def safe_json_list(value: Optional[str]) -> List[str]:
     return []
 
 
-def _hash_password(password: str) -> str:
-    iterations = int(os.environ.get("AUTH_PBKDF2_ITERATIONS", "260000"))
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+def _env_bool(key: str, default: bool = False) -> bool:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> str:
+    if not password:
+        raise ValueError("password is required")
+    if not salt:
+        salt = secrets.token_hex(16)
+    iterations = 200_000
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        iterations,
+    )
     return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
 
 
-def _verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        algorithm, iterations_str, salt, digest_hex = stored_hash.split("$", 3)
-    except ValueError:
-        return False
-    if algorithm != "pbkdf2_sha256":
+def verify_password(password: str, stored_hash: str) -> bool:
+    if not password or not stored_hash:
         return False
     try:
-        iterations = int(iterations_str)
+        scheme, iter_raw, salt, digest = stored_hash.split("$", 3)
     except ValueError:
         return False
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
-    return hmac.compare_digest(digest_hex, digest.hex())
+    if scheme != "pbkdf2_sha256":
+        return False
+    try:
+        iterations = int(iter_raw)
+    except ValueError:
+        return False
+    computed = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        iterations,
+    ).hex()
+    return hmac.compare_digest(computed, digest)
 
 
-def _session_ttl() -> timedelta:
-    hours = int(os.environ.get("AUTH_SESSION_TTL_HOURS", "24"))
-    return timedelta(hours=hours)
+AUTH_REQUIRED = _env_bool("AUTH_REQUIRED", False)
+AUTH_COOKIE_NAME = os.environ.get("AUTH_COOKIE_NAME", "contractocr_session")
+AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", False)
+try:
+    AUTH_SESSION_DAYS = int(os.environ.get("AUTH_SESSION_DAYS", "7"))
+except ValueError:
+    AUTH_SESSION_DAYS = 7
 
 
 def init_db():
@@ -286,7 +314,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
           name TEXT NOT NULL,
           email TEXT NOT NULL,
           password_hash TEXT NOT NULL,
-          is_admin INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -296,64 +324,66 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS auth_roles (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL UNIQUE,
-          description TEXT,
           created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS auth_user_roles (
           user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
           role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
           PRIMARY KEY (user_id, role_id)
         );
+        CREATE INDEX IF NOT EXISTS idx_auth_user_roles_user ON auth_user_roles(user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_user_roles_role ON auth_user_roles(role_id);
 
         CREATE TABLE IF NOT EXISTS auth_sessions (
-          token TEXT PRIMARY KEY,
+          id TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
           created_at TEXT NOT NULL,
           expires_at TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
-          ON auth_sessions(user_id);
-        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires
-          ON auth_sessions(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
         """
     )
 
     conn.execute(
-        """
-        INSERT OR IGNORE INTO auth_roles (name, description, created_at)
-        VALUES (?, ?, ?)
-        """,
-        ("admin", "Administrator", now_iso()),
+        "INSERT OR IGNORE INTO auth_roles (name, created_at) VALUES (?, ?)",
+        ("admin", now_iso()),
     )
-
-    existing_users = conn.execute("SELECT COUNT(1) AS count FROM auth_users").fetchone()
-    admin_email = (_env_first("ADMIN_EMAIL", "CONTRACTOCR_ADMIN_EMAIL") or "").strip().lower()
-    admin_password = _env_first("ADMIN_PASSWORD", "CONTRACTOCR_ADMIN_PASSWORD")
-    admin_name = (_env_first("ADMIN_NAME", "CONTRACTOCR_ADMIN_NAME") or "").strip()
-    if existing_users and existing_users["count"] == 0 and admin_email and admin_password:
-        created_at = now_iso()
-        cur = conn.execute(
-            """
-            INSERT INTO auth_users (name, email, password_hash, is_admin, created_at, updated_at)
-            VALUES (?, ?, ?, 1, ?, ?)
-            """,
-            (
-                admin_name or admin_email,
-                admin_email,
-                _hash_password(admin_password),
-                created_at,
-                created_at,
-            ),
-        )
+    admin_email = _env_first("ADMIN_EMAIL", "CONTRACT_ADMIN_EMAIL").strip().lower()
+    admin_password = _env_first("ADMIN_PASSWORD", "CONTRACT_ADMIN_PASSWORD").strip()
+    admin_name = _env_first("ADMIN_NAME", "CONTRACT_ADMIN_NAME") or "Admin"
+    if admin_email and admin_password:
+        row = conn.execute(
+            "SELECT id FROM auth_users WHERE lower(email) = ?",
+            (admin_email,),
+        ).fetchone()
+        if row:
+            user_id = row["id"]
+        else:
+            now = now_iso()
+            password_hash = hash_password(admin_password)
+            cur = conn.execute(
+                """
+                INSERT INTO auth_users
+                  (name, email, password_hash, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, 1, ?, ?)
+                """,
+                (admin_name, admin_email, password_hash, now, now),
+            )
+            user_id = cur.lastrowid
         role_row = conn.execute(
             "SELECT id FROM auth_roles WHERE name = ?",
             ("admin",),
         ).fetchone()
-        if role_row:
+        if role_row and user_id:
             conn.execute(
-                "INSERT OR IGNORE INTO auth_user_roles (user_id, role_id) VALUES (?, ?)",
-                (cur.lastrowid, role_row["id"]),
+                """
+                INSERT OR IGNORE INTO auth_user_roles (user_id, role_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, role_row["id"], now_iso()),
             )
 
     if not has_table("notification_logs"):
@@ -520,12 +550,15 @@ class AuthLogin(BaseModel):
     email: str
     password: str
 
+    @validator("email", pre=True)
+    def normalize_email(cls, value: str) -> str:
+        return str(value or "").strip().lower()
+
 
 class AuthUserOut(BaseModel):
     id: int
     name: str
     email: str
-    is_admin: bool
     roles: List[str] = Field(default_factory=list)
 
 
@@ -1225,70 +1258,88 @@ def _upsert_manual_term(contract_id: str, payload: TermUpsert) -> Dict[str, Any]
     }
 
 # ----------------------------
-# Auth endpoints
+# Auth helpers
 # ----------------------------
-@app.post("/api/auth/login", response_model=AuthUserOut)
-def login(payload: AuthLogin, response: Response):
-    email = payload.email.strip().lower()
-    password = payload.password or ""
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", ""))
+    except ValueError:
+        return None
+
+
+def _get_user_roles(conn: sqlite3.Connection, user_id: int) -> List[str]:
+    rows = conn.execute(
+        """
+        SELECT r.name
+        FROM auth_roles r
+        JOIN auth_user_roles ur ON ur.role_id = r.id
+        WHERE ur.user_id = ?
+        ORDER BY r.name ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def get_current_user(request: Request) -> Optional[Dict[str, Any]]:
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if not token:
+        return None
     with db() as conn:
         row = conn.execute(
             """
-            SELECT id, name, email, password_hash, is_admin
-            FROM auth_users
-            WHERE lower(email) = ?
+            SELECT s.id AS session_id, s.expires_at,
+                   u.id, u.name, u.email, u.is_active
+            FROM auth_sessions s
+            JOIN auth_users u ON u.id = s.user_id
+            WHERE s.id = ?
             """,
-            (email,),
+            (token,),
         ).fetchone()
-        if not row or not _verify_password(password, row["password_hash"]):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-
-        token = secrets.token_urlsafe(32)
-        created_at = now_iso()
-        expires_at = (datetime.utcnow() + _session_ttl()).replace(microsecond=0).isoformat() + "Z"
-        conn.execute(
-            """
-            INSERT INTO auth_sessions (token, user_id, created_at, expires_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (token, row["id"], created_at, expires_at),
-        )
-        roles = _load_user_roles(conn, row["id"])
-
-    response.set_cookie(
-        "session_token",
-        token,
-        httponly=True,
-        samesite="lax",
-        secure=_cookie_secure_flag(),
-        max_age=int(_session_ttl().total_seconds()),
-    )
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "email": row["email"],
-        "is_admin": bool(row["is_admin"]),
-        "roles": roles,
-    }
+        if not row:
+            return None
+        if not row["is_active"]:
+            return None
+        expires = _parse_iso_datetime(row["expires_at"])
+        if expires and expires <= datetime.utcnow():
+            conn.execute("DELETE FROM auth_sessions WHERE id = ?", (token,))
+            return None
+        roles = _get_user_roles(conn, row["id"])
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "email": row["email"],
+            "roles": roles,
+        }
 
 
-@app.post("/api/auth/logout")
-def logout(request: Request, response: Response):
-    token = _get_session_token(request)
-    if token:
-        with db() as conn:
-            conn.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
-    response.delete_cookie("session_token")
-    return {"ok": True}
-
-
-@app.get("/api/auth/me", response_model=AuthUserOut)
-def auth_me(request: Request):
-    user = _get_current_user(request)
+def require_admin(request: Request) -> Optional[Dict[str, Any]]:
+    if not AUTH_REQUIRED:
+        return None
+    user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    if "admin" not in user.get("roles", []):
+        raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
+
+def create_session(conn: sqlite3.Connection, user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    created_at = now_iso()
+    expires_at = (
+        datetime.utcnow() + timedelta(days=AUTH_SESSION_DAYS)
+    ).replace(microsecond=0).isoformat() + "Z"
+    conn.execute(
+        """
+        INSERT INTO auth_sessions (id, user_id, created_at, expires_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (token, user_id, created_at, expires_at),
+    )
+    return token
 
 # ----------------------------
 # Agreement types / Tags endpoints
@@ -1331,6 +1382,55 @@ def delete_tag(tag_id: int, _: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
         return {"deleted": tag_id}
+
+
+# ----------------------------
+# Auth endpoints
+# ----------------------------
+@app.post("/api/auth/login")
+def login(payload: AuthLogin, response: Response):
+    email = payload.email.strip().lower()
+    password = payload.password or ""
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, name, email, password_hash, is_active
+            FROM auth_users
+            WHERE lower(email) = ?
+            """,
+            (email,),
+        ).fetchone()
+        if not row or not row["is_active"] or not verify_password(password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        token = create_session(conn, row["id"])
+        roles = _get_user_roles(conn, row["id"])
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=AUTH_COOKIE_SECURE,
+        max_age=AUTH_SESSION_DAYS * 86400,
+    )
+    return {"id": row["id"], "name": row["name"], "email": row["email"], "roles": roles}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if token:
+        with db() as conn:
+            conn.execute("DELETE FROM auth_sessions WHERE id = ?", (token,))
+    response.delete_cookie(AUTH_COOKIE_NAME)
+    return {"logged_out": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    user = get_current_user(request)
+    if not user and AUTH_REQUIRED:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return {"user": user, "auth_required": AUTH_REQUIRED}
 
 
 # ----------------------------
@@ -1666,7 +1766,8 @@ def list_pending_agreement_reminders(_: Dict[str, Any] = Depends(require_admin))
 
 @app.post("/api/pending-agreement-reminders")
 def create_pending_agreement_reminder(
-    payload: PendingAgreementReminderCreate, _: Dict[str, Any] = Depends(require_admin)
+    payload: PendingAgreementReminderCreate,
+    _: Dict[str, Any] = Depends(require_admin),
 ):
     if not payload.roles and not payload.recipients:
         raise HTTPException(
@@ -1770,7 +1871,8 @@ def update_pending_agreement_reminder(
 
 @app.delete("/api/pending-agreement-reminders/{reminder_id}")
 def delete_pending_agreement_reminder(
-    reminder_id: str, _: Dict[str, Any] = Depends(require_admin)
+    reminder_id: str,
+    _: Dict[str, Any] = Depends(require_admin),
 ):
     with db() as conn:
         row = conn.execute(
