@@ -489,10 +489,7 @@ function closePendingAgreementModal() {
 }
 
 function getApiBase() {
-  return localStorage.getItem("apiBase") || "http://localhost:8080";
-}
-function setApiBase(v) {
-  localStorage.setItem("apiBase", v);
+  return window.API_BASE || "http://192.168.149.8:8080";
 }
 
 const THEME_STORAGE_KEY = "uiTheme";
@@ -901,18 +898,13 @@ function shiftMonthValue(value, delta) {
   return `${date.getFullYear()}-${newMonth}`;
 }
 
-function setApiUi() {
-  $("apiBase").value = getApiBase();
-  $("apiStatus").textContent = "";
-}
-
 async function testApi() {
-  $("apiStatus").textContent = "Testing...";
   try {
     await apiFetch("/openapi.json");
-    $("apiStatus").textContent = "OK";
+    return true;
   } catch (e) {
-    $("apiStatus").textContent = `FAIL: ${e.message}`;
+    console.warn("API check failed:", e);
+    return false;
   }
 }
 
@@ -3914,15 +3906,8 @@ $("navNotifications")?.addEventListener("click", () => showPage("notifications")
 $("navAdmin")?.addEventListener("click", () => showPage("admin"));
 $("navOutputs")?.addEventListener("click", () => showPage("outputs"));
 
-$("saveApi").addEventListener("click", async () => {
-  setApiBase($("apiBase").value.trim());
-  setApiUi();
-  await loadAppData();
-});
-
 $("refresh").addEventListener("click", loadRecent);
 
-setApiUi();
 initModal();
 initAuthUi();
 initDropzone();
