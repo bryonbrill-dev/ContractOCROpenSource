@@ -2225,7 +2225,8 @@ function resetAdminUserForm() {
   if (isAdmin) isAdmin.checked = false;
   renderCheckboxList("adminUserRoles", state.roles, []);
   $("adminUserSave")?.setAttribute("data-mode", "create");
-  $("adminUserSave")?.textContent = "Add user";
+  const adminUserSave = $("adminUserSave");
+  if (adminUserSave) adminUserSave.textContent = "Add user";
   const status = $("adminUserStatus");
   if (status) status.textContent = "";
 }
@@ -2244,7 +2245,8 @@ function openAdminUserEdit(user) {
   if (isAdmin) isAdmin.checked = Boolean(user.is_admin);
   renderCheckboxList("adminUserRoles", state.roles, user.role_ids || []);
   $("adminUserSave")?.setAttribute("data-mode", "edit");
-  $("adminUserSave")?.textContent = "Update user";
+  const adminUserSave = $("adminUserSave");
+  if (adminUserSave) adminUserSave.textContent = "Update user";
   const status = $("adminUserStatus");
   if (status) status.textContent = `Editing ${user.name || user.email}`;
 }
@@ -2287,7 +2289,8 @@ function resetAdminRoleForm() {
   if (name) name.value = "";
   if (description) description.value = "";
   $("adminRoleSave")?.setAttribute("data-mode", "create");
-  $("adminRoleSave")?.textContent = "Add role";
+  const adminRoleSave = $("adminRoleSave");
+  if (adminRoleSave) adminRoleSave.textContent = "Add role";
   const status = $("adminRoleStatus");
   if (status) status.textContent = "";
 }
@@ -2299,7 +2302,8 @@ function openAdminRoleEdit(role) {
   if (name) name.value = role.name || "";
   if (description) description.value = role.description || "";
   $("adminRoleSave")?.setAttribute("data-mode", "edit");
-  $("adminRoleSave")?.textContent = "Update role";
+  const adminRoleSave = $("adminRoleSave");
+  if (adminRoleSave) adminRoleSave.textContent = "Update role";
   const status = $("adminRoleStatus");
   if (status) status.textContent = `Editing ${role.name}`;
 }
