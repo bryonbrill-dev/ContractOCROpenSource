@@ -76,6 +76,14 @@ def _cors_allow_origins() -> List[str]:
         "http://127.0.0.1:3000",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
+        "https://localhost:3000",
+        "https://127.0.0.1:3000",
+        "https://localhost:8080",
+        "https://127.0.0.1:8080",
+        "http://192.168.149.8:3000",
+        "http://192.168.149.8:8080",
+        "https://192.168.149.8:3000",
+        "https://192.168.149.8:8080",
     ]
 
 app.add_middleware(
