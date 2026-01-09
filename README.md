@@ -8,6 +8,21 @@ This FastAPI + vanilla JS app ingests contracts, runs OCR, extracts key dates/te
 3. Run the API: `uvicorn app:app --host 0.0.0.0 --port 8080`.
 4. Open `ui/index.html` in your browser (or serve it from any static host) and set the API base to your running server (default `http://localhost:8080`).
 
+## Azure AD OIDC login
+You can enable Microsoft Entra ID (Azure AD) OIDC login alongside the local admin account (for break-glass access).
+
+1. Register a **Web** app in Azure AD.
+2. Add a redirect URI pointing to your API (for example `http://localhost:8080/api/auth/oidc/callback`).
+3. Create a client secret and store these environment variables:
+   - `OIDC_CLIENT_ID` (Azure AD app/client ID)
+   - `OIDC_TENANT_ID` (Azure AD tenant ID)
+   - `OIDC_CLIENT_SECRET` (client secret value)
+   - `OIDC_REDIRECT_URI` (must match the redirect URI registered in Azure AD)
+   - `OIDC_DEFAULT_ROLE_NAMES` (optional, comma-separated role names to assign on first login; defaults to `user`)
+   - `OIDC_SCOPES` (optional, defaults to `openid profile email`)
+
+To start an OIDC login, navigate to `GET /api/auth/oidc/login`. On successful authentication, the API will create a local user record (if needed), assign the default roles, and set the normal session cookie.
+
 ## Contracts page – manual controls
 The Contracts page now exposes several manual editing tools for cases where OCR did not detect terms or events:
 
