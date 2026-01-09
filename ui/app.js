@@ -51,6 +51,7 @@ const state = {
   currentUser: null,
   authReady: false,
   authRequired: false,
+  oidcEnabled: false,
 };
 const EXPIRING_TYPES = ["renewal", "termination", "auto_opt_out"];
 const TERM_EVENT_MAP = {
@@ -159,6 +160,7 @@ function getAuthElements() {
     status: $("authStatus"),
     loginButton: $("authLoginButton"),
     logoutButton: $("authLogoutButton"),
+    microsoftButton: $("authMicrosoftButton"),
   };
 }
 
@@ -181,7 +183,7 @@ function hideAuthOverlay() {
 }
 
 function renderAuthStatus() {
-  const { status, loginButton, logoutButton } = getAuthElements();
+  const { status, loginButton, logoutButton, microsoftButton } = getAuthElements();
   if (!status || !loginButton || !logoutButton) return;
   const currentUser = state.currentUser?.user || state.currentUser;
   if (currentUser) {
@@ -197,6 +199,9 @@ function renderAuthStatus() {
   if (adminButton) {
     const isAdmin = !state.authRequired || (currentUser && currentUser.roles?.includes("admin"));
     adminButton.classList.toggle("hidden", !isAdmin);
+  }
+  if (microsoftButton) {
+    microsoftButton.classList.toggle("hidden", !state.oidcEnabled);
   }
 }
 
@@ -226,6 +231,7 @@ async function ensureAuth() {
     const data = await res.json();
     state.currentUser = data.user;
     state.authRequired = Boolean(data.auth_required);
+    state.oidcEnabled = Boolean(data.oidc_enabled);
     state.authReady = true;
     renderAuthStatus();
     return Boolean(data.user) || !data.auth_required;
@@ -233,6 +239,7 @@ async function ensureAuth() {
     state.authReady = true;
     state.currentUser = null;
     state.authRequired = true;
+    state.oidcEnabled = false;
     renderAuthStatus();
     showAuthOverlay();
     return false;
@@ -240,7 +247,7 @@ async function ensureAuth() {
 }
 
 function initAuthUi() {
-  const { form, loginButton, logoutButton, error } = getAuthElements();
+  const { form, loginButton, logoutButton, error, microsoftButton } = getAuthElements();
   if (loginButton) loginButton.addEventListener("click", () => showAuthOverlay());
   if (logoutButton) {
     logoutButton.addEventListener("click", async () => {
@@ -249,6 +256,11 @@ function initAuthUi() {
       } catch (err) {
         if (error) error.textContent = err.message || "Unable to sign out.";
       }
+    });
+  }
+  if (microsoftButton) {
+    microsoftButton.addEventListener("click", () => {
+      window.location.href = `${getApiBase()}/api/auth/oidc/login`;
     });
   }
   if (form) {
