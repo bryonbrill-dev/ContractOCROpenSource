@@ -365,6 +365,9 @@ OIDC_CLIENT_ID = _env_first("OIDC_CLIENT_ID", "AZURE_AD_CLIENT_ID")
 OIDC_TENANT_ID = _env_first("OIDC_TENANT_ID", "AZURE_AD_TENANT_ID")
 OIDC_CLIENT_SECRET = _env_first("OIDC_CLIENT_SECRET", "AZURE_AD_CLIENT_SECRET")
 OIDC_REDIRECT_URI = _env_first("OIDC_REDIRECT_URI", "AZURE_AD_REDIRECT_URI")
+OIDC_POST_LOGIN_REDIRECT = (
+    _env_first("OIDC_POST_LOGIN_REDIRECT", "OIDC_POST_LOGIN_REDIRECT_URL") or "/"
+)
 OIDC_DEFAULT_ROLE_NAMES = [
     name.strip()
     for name in _env_first("OIDC_DEFAULT_ROLE_NAMES").split(",")
@@ -1621,12 +1624,19 @@ def get_current_user(request: Request) -> Optional[Dict[str, Any]]:
         }
 
 
-def require_admin(request: Request) -> Optional[Dict[str, Any]]:
+def require_user(request: Request) -> Optional[Dict[str, Any]]:
     if not AUTH_REQUIRED:
         return None
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def require_admin(request: Request) -> Optional[Dict[str, Any]]:
+    user = require_user(request)
+    if not AUTH_REQUIRED:
+        return None
     if "admin" not in user.get("roles", []):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
@@ -2183,7 +2193,11 @@ def auth_me(request: Request):
     user = get_current_user(request)
     if not user and AUTH_REQUIRED:
         raise HTTPException(status_code=401, detail="Authentication required")
-    return {"user": user, "auth_required": AUTH_REQUIRED}
+    return {
+        "user": user,
+        "auth_required": AUTH_REQUIRED,
+        "oidc_enabled": OIDC_ENABLED,
+    }
 
 
 @app.get("/api/auth/oidc/login")
@@ -2199,7 +2213,7 @@ def oidc_login():
 
 
 @app.get("/api/auth/oidc/callback")
-def oidc_callback(code: str, state: str, response: Response):
+def oidc_callback(code: str, state: str):
     if not OIDC_ENABLED:
         raise HTTPException(status_code=400, detail="OIDC is not configured")
     with db() as conn:
@@ -2223,8 +2237,8 @@ def oidc_callback(code: str, state: str, response: Response):
     with db() as conn:
         user_id = _oidc_get_or_create_user(conn, email, name)
         token = create_session(conn, user_id)
-        roles = _get_user_roles(conn, user_id)
-    response.set_cookie(
+    redirect_response = RedirectResponse(OIDC_POST_LOGIN_REDIRECT, status_code=303)
+    redirect_response.set_cookie(
         AUTH_COOKIE_NAME,
         token,
         httponly=True,
@@ -2232,7 +2246,7 @@ def oidc_callback(code: str, state: str, response: Response):
         secure=AUTH_COOKIE_SECURE,
         max_age=AUTH_SESSION_DAYS * 86400,
     )
-    return {"id": user_id, "name": name, "email": email, "roles": roles}
+    return redirect_response
 
 
 # ----------------------------
@@ -2804,7 +2818,11 @@ def list_term_definitions():
 
 
 @app.post("/api/contracts/{contract_id}/tags/{tag_id}")
-def add_tag_to_contract(contract_id: str, tag_id: int):
+def add_tag_to_contract(
+    contract_id: str,
+    tag_id: int,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         conn.execute(
             """
@@ -2817,7 +2835,11 @@ def add_tag_to_contract(contract_id: str, tag_id: int):
 
 
 @app.delete("/api/contracts/{contract_id}/tags/{tag_id}")
-def remove_tag_from_contract(contract_id: str, tag_id: int):
+def remove_tag_from_contract(
+    contract_id: str,
+    tag_id: int,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         conn.execute(
             "DELETE FROM contract_tags WHERE contract_id = ? AND tag_id = ?",
@@ -2897,6 +2919,7 @@ async def upload_contract(
     title: Optional[str] = None,
     vendor: Optional[str] = None,
     agreement_type: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_user),
 ):
     data = await file.read()
     if not data:
@@ -3008,7 +3031,10 @@ async def upload_contract(
 # Reprocess
 # ----------------------------
 @app.post("/api/contracts/{contract_id}/reprocess")
-def reprocess_single_contract(contract_id: str):
+def reprocess_single_contract(
+    contract_id: str,
+    _: Dict[str, Any] = Depends(require_user),
+):
     return _reprocess_contract(contract_id)
 
 
@@ -3018,6 +3044,7 @@ def reprocess_contracts(
     status: Optional[str] = None,
     agreement_type: Optional[str] = None,
     all: bool = False,
+    _: Dict[str, Any] = Depends(require_user),
 ):
     limit = max(1, min(limit, 500))
 
@@ -3076,7 +3103,11 @@ def reprocess_contracts(
 # Calendar events endpoint
 # ----------------------------
 @app.get("/api/calendar/events")
-def get_calendar_events(start: str, end: str):
+def get_calendar_events(
+    start: str,
+    end: str,
+    _: Dict[str, Any] = Depends(require_user),
+):
     """Get events for calendar view (start and end are YYYY-MM-DD)"""
     with db() as conn:
         rows = conn.execute(
@@ -3163,6 +3194,7 @@ def list_contracts(
     mode: Optional[Literal["quick", "fulltext"]] = "quick",
     include_tags: bool = True,
     request: Request = None,
+    _: Dict[str, Any] = Depends(require_user),
 ):
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
@@ -3256,7 +3288,11 @@ def list_contracts(
 
 
 @app.put("/api/contracts/{contract_id}")
-def update_contract(contract_id: str, payload: ContractUpdate):
+def update_contract(
+    contract_id: str,
+    payload: ContractUpdate,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         existing = conn.execute(
             "SELECT * FROM contracts WHERE id = ?",
@@ -3296,7 +3332,7 @@ def update_contract(contract_id: str, payload: ContractUpdate):
 
 
 @app.delete("/api/contracts/{contract_id}")
-def delete_contract(contract_id: str):
+def delete_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
     with db() as conn:
         existing = conn.execute(
             "SELECT id, stored_path FROM contracts WHERE id = ?",
@@ -3326,7 +3362,7 @@ def delete_contract(contract_id: str):
 # Contract detail
 # ----------------------------
 @app.get("/api/contracts/{contract_id}")
-def get_contract(contract_id: str):
+def get_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
     with db() as conn:
         c = conn.execute(
             "SELECT * FROM contracts WHERE id = ?", (contract_id,)
@@ -3385,7 +3421,12 @@ def get_contract(contract_id: str):
 
 
 @app.put("/api/contracts/{contract_id}/terms/{term_key}")
-def upsert_term(contract_id: str, term_key: str, payload: TermUpsert):
+def upsert_term(
+    contract_id: str,
+    term_key: str,
+    payload: TermUpsert,
+    _: Dict[str, Any] = Depends(require_user),
+):
     if payload.term_key and payload.term_key != term_key:
         raise HTTPException(status_code=400, detail="term_key mismatch")
     payload.term_key = term_key
@@ -3394,7 +3435,11 @@ def upsert_term(contract_id: str, term_key: str, payload: TermUpsert):
 
 
 @app.delete("/api/contracts/{contract_id}/terms/{term_key}")
-def delete_term(contract_id: str, term_key: str):
+def delete_term(
+    contract_id: str,
+    term_key: str,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         conn.execute(
             "DELETE FROM term_instances WHERE contract_id = ? AND term_key = ?",
@@ -3408,7 +3453,11 @@ def delete_term(contract_id: str, term_key: str):
 
 
 @app.post("/api/contracts/{contract_id}/events")
-def create_event(contract_id: str, payload: EventCreate):
+def create_event(
+    contract_id: str,
+    payload: EventCreate,
+    _: Dict[str, Any] = Depends(require_user),
+):
     event_date = _normalize_date_string(payload.event_date)
     with db() as conn:
         c = conn.execute(
@@ -3431,7 +3480,11 @@ def create_event(contract_id: str, payload: EventCreate):
 
 
 @app.put("/api/events/{event_id}")
-def update_event(event_id: str, payload: EventUpdate):
+def update_event(
+    event_id: str,
+    payload: EventUpdate,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         ev = conn.execute(
             "SELECT * FROM events WHERE id = ?",
@@ -3455,7 +3508,7 @@ def update_event(event_id: str, payload: EventUpdate):
 
 
 @app.delete("/api/events/{event_id}")
-def delete_event(event_id: str):
+def delete_event(event_id: str, _: Dict[str, Any] = Depends(require_user)):
     with db() as conn:
         conn.execute("DELETE FROM reminder_settings WHERE event_id = ?", (event_id,))
         conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
@@ -3463,7 +3516,10 @@ def delete_event(event_id: str):
 
 
 @app.get("/api/contracts/{contract_id}/status")
-def get_contract_status(contract_id: str):
+def get_contract_status(
+    contract_id: str,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         c = conn.execute(
             "SELECT id, status, pages FROM contracts WHERE id = ?",
@@ -3477,7 +3533,7 @@ def get_contract_status(contract_id: str):
 # View / download
 # ----------------------------
 @app.get("/api/contracts/{contract_id}/original")
-def view_original(contract_id: str):
+def view_original(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
     with db() as conn:
         c = conn.execute(
             "SELECT stored_path, original_filename, mime_type FROM contracts WHERE id = ?",
@@ -3497,7 +3553,7 @@ def view_original(contract_id: str):
 
 
 @app.get("/api/contracts/{contract_id}/download")
-def download_contract(contract_id: str):
+def download_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
     with db() as conn:
         c = conn.execute(
             "SELECT stored_path, original_filename, mime_type FROM contracts WHERE id = ?",
@@ -3518,7 +3574,10 @@ def download_contract(contract_id: str):
 
 
 @app.get("/api/contracts/{contract_id}/ocr-text")
-def get_contract_ocr_text(contract_id: str):
+def get_contract_ocr_text(
+    contract_id: str,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         c = conn.execute(
             "SELECT id FROM contracts WHERE id = ?",
@@ -3547,7 +3606,12 @@ def get_contract_ocr_text(contract_id: str):
 # Month Events API (month grid)
 # ----------------------------
 @app.get("/api/events")
-def list_events(month: str, event_type: str = "all", sort: str = "date_asc"):
+def list_events(
+    month: str,
+    event_type: str = "all",
+    sort: str = "date_asc",
+    _: Dict[str, Any] = Depends(require_user),
+):
     """
     month: 'YYYY-MM'
     event_type: 'all' | 'renewal' | 'effective' | 'termination' | 'auto_opt_out' etc.
@@ -3618,6 +3682,7 @@ def search(
     q: str = "",
     term_key: Optional[str] = None,
     limit: int = 50,
+    _: Dict[str, Any] = Depends(require_user),
 ):
     q = (q or "").strip()
     limit = max(1, min(limit, 200))
@@ -3680,7 +3745,11 @@ def search(
 # Reminders
 # ----------------------------
 @app.put("/api/events/{event_id}/reminders")
-def update_reminders(event_id: str, payload: ReminderUpdate):
+def update_reminders(
+    event_id: str,
+    payload: ReminderUpdate,
+    _: Dict[str, Any] = Depends(require_user),
+):
     offsets = sorted(set(int(x) for x in payload.offsets if int(x) >= 0))
     recipients = [r.strip() for r in payload.recipients if r.strip()]
     if payload.enabled:
