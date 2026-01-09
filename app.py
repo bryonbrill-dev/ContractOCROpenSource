@@ -14,15 +14,18 @@ import logging
 import traceback
 import secrets
 import hmac
+import urllib.parse
+import urllib.request
 from datetime import datetime, date, timedelta
 from email.message import EmailMessage
 from typing import Optional, List, Literal, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
+import jwt
 
 load_dotenv()
 
@@ -284,6 +287,16 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_first(*keys: str) -> str:
+    for key in keys:
+        value = os.getenv(key)
+        if value:
+            cleaned = value.strip()
+            if cleaned and cleaned not in {key, f"{key}_PLACEHOLDER"}:
+                return cleaned
+    return ""
+
+
 def hash_password(password: str, salt: Optional[str] = None) -> str:
     if not password:
         raise ValueError("password is required")
@@ -328,6 +341,25 @@ try:
     AUTH_SESSION_DAYS = int(os.environ.get("AUTH_SESSION_DAYS", "7"))
 except ValueError:
     AUTH_SESSION_DAYS = 7
+
+OIDC_CLIENT_ID = _env_first("OIDC_CLIENT_ID", "AZURE_AD_CLIENT_ID")
+OIDC_TENANT_ID = _env_first("OIDC_TENANT_ID", "AZURE_AD_TENANT_ID")
+OIDC_CLIENT_SECRET = _env_first("OIDC_CLIENT_SECRET", "AZURE_AD_CLIENT_SECRET")
+OIDC_REDIRECT_URI = _env_first("OIDC_REDIRECT_URI", "AZURE_AD_REDIRECT_URI")
+OIDC_DEFAULT_ROLE_NAMES = [
+    name.strip()
+    for name in _env_first("OIDC_DEFAULT_ROLE_NAMES").split(",")
+    if name.strip()
+] or ["user"]
+OIDC_SCOPES = _env_first("OIDC_SCOPES") or "openid profile email"
+try:
+    OIDC_STATE_TTL_MINUTES = int(os.environ.get("OIDC_STATE_TTL_MINUTES", "10"))
+except ValueError:
+    OIDC_STATE_TTL_MINUTES = 10
+OIDC_ENABLED = bool(OIDC_CLIENT_ID and OIDC_TENANT_ID and OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI)
+
+_OIDC_CONFIG_CACHE: Dict[str, Any] = {}
+_OIDC_JWKS_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def init_db():
@@ -442,6 +474,14 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
+        CREATE TABLE IF NOT EXISTS auth_oidc_states (
+          state TEXT PRIMARY KEY,
+          nonce TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expires_at);
         """
     )
 
@@ -1129,6 +1169,14 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS auth_oidc_states (
+  state TEXT PRIMARY KEY,
+  nonce TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expires_at);
+
 CREATE TABLE IF NOT EXISTS notification_logs (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -1580,6 +1628,190 @@ def create_session(conn: sqlite3.Connection, user_id: int) -> str:
     )
     return token
 
+
+def _oidc_authority() -> str:
+    return f"https://login.microsoftonline.com/{OIDC_TENANT_ID}/v2.0"
+
+
+def _oidc_discovery_url() -> str:
+    return f"{_oidc_authority()}/.well-known/openid-configuration"
+
+
+def _oidc_fetch_json(url: str, data: Optional[bytes] = None) -> Dict[str, Any]:
+    headers = {}
+    if data is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    req = urllib.request.Request(url, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = resp.read()
+    return json.loads(payload.decode("utf-8"))
+
+
+def _oidc_config() -> Dict[str, Any]:
+    if not OIDC_ENABLED:
+        raise HTTPException(status_code=400, detail="OIDC is not configured")
+    if _OIDC_CONFIG_CACHE:
+        return _OIDC_CONFIG_CACHE
+    config = _oidc_fetch_json(_oidc_discovery_url())
+    _OIDC_CONFIG_CACHE.update(config)
+    return config
+
+
+def _oidc_jwks() -> Dict[str, Any]:
+    if _OIDC_JWKS_CACHE:
+        return _OIDC_JWKS_CACHE
+    config = _oidc_config()
+    jwks = _oidc_fetch_json(config["jwks_uri"])
+    _OIDC_JWKS_CACHE.update(jwks)
+    return jwks
+
+
+def _oidc_state_store(conn: sqlite3.Connection, state: str, nonce: str) -> None:
+    created_at = now_iso()
+    expires_at = (datetime.utcnow() + timedelta(minutes=OIDC_STATE_TTL_MINUTES)).replace(
+        microsecond=0
+    ).isoformat() + "Z"
+    conn.execute(
+        """
+        INSERT INTO auth_oidc_states (state, nonce, created_at, expires_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (state, nonce, created_at, expires_at),
+    )
+
+
+def _oidc_state_pop(conn: sqlite3.Connection, state: str) -> Optional[str]:
+    conn.execute(
+        "DELETE FROM auth_oidc_states WHERE expires_at <= ?",
+        (now_iso(),),
+    )
+    row = conn.execute(
+        "SELECT nonce, expires_at FROM auth_oidc_states WHERE state = ?",
+        (state,),
+    ).fetchone()
+    conn.execute("DELETE FROM auth_oidc_states WHERE state = ?", (state,))
+    if not row:
+        return None
+    expires_at = _parse_iso_datetime(row["expires_at"])
+    if expires_at and expires_at <= datetime.utcnow():
+        return None
+    return row["nonce"]
+
+
+def _oidc_build_authorize_url(state: str, nonce: str) -> str:
+    config = _oidc_config()
+    params = {
+        "client_id": OIDC_CLIENT_ID,
+        "response_type": "code",
+        "response_mode": "query",
+        "scope": OIDC_SCOPES,
+        "redirect_uri": OIDC_REDIRECT_URI,
+        "state": state,
+        "nonce": nonce,
+    }
+    return f"{config['authorization_endpoint']}?{urllib.parse.urlencode(params)}"
+
+
+def _oidc_exchange_code(code: str) -> Dict[str, Any]:
+    config = _oidc_config()
+    payload = urllib.parse.urlencode(
+        {
+            "client_id": OIDC_CLIENT_ID,
+            "client_secret": OIDC_CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": OIDC_REDIRECT_URI,
+        }
+    ).encode("utf-8")
+    return _oidc_fetch_json(config["token_endpoint"], data=payload)
+
+
+def _oidc_decode_id_token(id_token: str, nonce: str) -> Dict[str, Any]:
+    config = _oidc_config()
+    jwks = _oidc_jwks()
+    unverified = jwt.get_unverified_header(id_token)
+    kid = unverified.get("kid")
+    key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+    if not key:
+        raise HTTPException(status_code=401, detail="OIDC signing key not found")
+    public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+    claims = jwt.decode(
+        id_token,
+        public_key,
+        algorithms=[unverified.get("alg", "RS256")],
+        audience=OIDC_CLIENT_ID,
+        issuer=config["issuer"],
+    )
+    if claims.get("nonce") != nonce:
+        raise HTTPException(status_code=401, detail="OIDC nonce mismatch")
+    return claims
+
+
+def _oidc_default_role_ids(conn: sqlite3.Connection) -> List[int]:
+    role_ids: List[int] = []
+    now = now_iso()
+    for name in OIDC_DEFAULT_ROLE_NAMES:
+        row = conn.execute("SELECT id FROM auth_roles WHERE name = ?", (name,)).fetchone()
+        if not row:
+            if _table_has_column(conn, "auth_roles", "description"):
+                cur = conn.execute(
+                    "INSERT INTO auth_roles (name, description, created_at) VALUES (?, ?, ?)",
+                    (name, None, now),
+                )
+            else:
+                cur = conn.execute(
+                    "INSERT INTO auth_roles (name, created_at) VALUES (?, ?)",
+                    (name, now),
+                )
+            role_ids.append(cur.lastrowid)
+        else:
+            role_ids.append(row["id"])
+    return role_ids
+
+
+def _oidc_get_or_create_user(conn: sqlite3.Connection, email: str, name: str) -> int:
+    row = conn.execute(
+        "SELECT id, is_admin FROM auth_users WHERE lower(email) = ?",
+        (email.lower(),),
+    ).fetchone()
+    now = now_iso()
+    if row:
+        if name:
+            conn.execute(
+                "UPDATE auth_users SET name = ?, updated_at = ? WHERE id = ?",
+                (name, now, row["id"]),
+            )
+        role_ids = _get_user_role_ids(conn, row["id"])
+        admin_role = conn.execute(
+            "SELECT id FROM auth_roles WHERE name = ?",
+            ("admin",),
+        ).fetchone()
+        has_admin_role = admin_role and admin_role["id"] in role_ids
+        if not row["is_admin"] and not has_admin_role and not role_ids:
+            _set_user_roles(conn, row["id"], _oidc_default_role_ids(conn))
+        return row["id"]
+    password_hash = hash_password(secrets.token_urlsafe(24))
+    is_active_column = _table_has_column(conn, "auth_users", "is_active")
+    is_admin_column = _table_has_column(conn, "auth_users", "is_admin")
+    columns = ["name", "email", "password_hash"]
+    values: List[Any] = [name or email, email.lower(), password_hash]
+    if is_active_column:
+        columns.append("is_active")
+        values.append(1)
+    if is_admin_column:
+        columns.append("is_admin")
+        values.append(0)
+    columns.extend(["created_at", "updated_at"])
+    values.extend([now, now])
+    placeholders = ", ".join("?" for _ in values)
+    cur = conn.execute(
+        f"INSERT INTO auth_users ({', '.join(columns)}) VALUES ({placeholders})",
+        tuple(values),
+    )
+    user_id = cur.lastrowid
+    _set_user_roles(conn, user_id, _oidc_default_role_ids(conn))
+    return user_id
+
 # ----------------------------
 # Agreement types / Tags endpoints
 # ----------------------------
@@ -1926,6 +2158,55 @@ def auth_me(request: Request):
     if not user and AUTH_REQUIRED:
         raise HTTPException(status_code=401, detail="Authentication required")
     return {"user": user, "auth_required": AUTH_REQUIRED}
+
+
+@app.get("/api/auth/oidc/login")
+def oidc_login():
+    if not OIDC_ENABLED:
+        raise HTTPException(status_code=400, detail="OIDC is not configured")
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    with db() as conn:
+        _oidc_state_store(conn, state, nonce)
+    url = _oidc_build_authorize_url(state, nonce)
+    return RedirectResponse(url)
+
+
+@app.get("/api/auth/oidc/callback")
+def oidc_callback(code: str, state: str, response: Response):
+    if not OIDC_ENABLED:
+        raise HTTPException(status_code=400, detail="OIDC is not configured")
+    with db() as conn:
+        nonce = _oidc_state_pop(conn, state)
+    if not nonce:
+        raise HTTPException(status_code=400, detail="OIDC state is invalid or expired")
+    token_data = _oidc_exchange_code(code)
+    id_token = token_data.get("id_token")
+    if not id_token:
+        raise HTTPException(status_code=401, detail="OIDC token response missing id_token")
+    claims = _oidc_decode_id_token(id_token, nonce)
+    email = (
+        claims.get("preferred_username")
+        or claims.get("email")
+        or claims.get("upn")
+        or ""
+    ).strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="OIDC token missing email claim")
+    name = (claims.get("name") or email).strip()
+    with db() as conn:
+        user_id = _oidc_get_or_create_user(conn, email, name)
+        token = create_session(conn, user_id)
+        roles = _get_user_roles(conn, user_id)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=AUTH_COOKIE_SECURE,
+        max_age=AUTH_SESSION_DAYS * 86400,
+    )
+    return {"id": user_id, "name": name, "email": email, "roles": roles}
 
 
 # ----------------------------
@@ -3424,16 +3705,6 @@ def update_reminders(event_id: str, payload: ReminderUpdate):
 # ----------------------------
 # Reminder email delivery
 # ----------------------------
-def _env_first(*keys: str) -> str:
-    for key in keys:
-        value = os.getenv(key)
-        if value:
-            cleaned = value.strip()
-            if cleaned and cleaned not in {key, f"{key}_PLACEHOLDER"}:
-                return cleaned
-    return ""
-
-
 def _smtp_from_address() -> str:
     from_addr = _env_first("SMTP_FROM", "SMTP_FROM_ADDRESS")
     if from_addr:
