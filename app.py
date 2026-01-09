@@ -67,9 +67,20 @@ if not logger.handlers:
 # ----------------------------
 app = FastAPI(title="Contract OCR & Renewal Tracker")
 
+def _cors_allow_origins() -> List[str]:
+    raw = os.environ.get("CORS_ALLOW_ORIGINS", "")
+    if raw.strip():
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # adjust to specific origins if desired
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
