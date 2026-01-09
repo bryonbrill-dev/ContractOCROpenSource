@@ -489,7 +489,13 @@ function closePendingAgreementModal() {
 }
 
 function getApiBase() {
-  return window.API_BASE || "http://192.168.149.8:8080";
+  if (window.API_BASE) {
+    return window.API_BASE;
+  }
+  if (window.location && window.location.hostname) {
+    return `${window.location.protocol}//${window.location.hostname}:8080`;
+  }
+  return "https://127.0.0.1:8080";
 }
 
 const THEME_STORAGE_KEY = "uiTheme";

@@ -15,5 +15,12 @@ REM set SMTP_PASSWORD=CHANGEME
 REM set SMTP_FROM=admin@local.com
 REM set SMTP_FROM_NAME=Contract OCR
 
+REM TLS cert/key for HTTPS API
+REM set SSL_CERTFILE=C:\ContractsOCR\Workarea\certs\localhost-cert.pem
+REM set SSL_KEYFILE=C:\ContractsOCR\Workarea\certs\localhost-key.pem
+
+set UVICORN_SSL_ARGS=
+if not "%SSL_CERTFILE%"=="" set UVICORN_SSL_ARGS=--ssl-certfile "%SSL_CERTFILE%" --ssl-keyfile "%SSL_KEYFILE%"
+
 cd /d C:\ContractsOCR\Workarea
-uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+uvicorn app:app --host 0.0.0.0 --port 8080 --reload %UVICORN_SSL_ARGS%
