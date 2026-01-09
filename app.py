@@ -67,9 +67,20 @@ if not logger.handlers:
 # ----------------------------
 app = FastAPI(title="Contract OCR & Renewal Tracker")
 
+def _cors_allow_origins() -> List[str]:
+    raw = os.environ.get("CORS_ALLOW_ORIGINS", "")
+    if raw.strip():
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # adjust to specific origins if desired
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1770,12 +1781,20 @@ def _oidc_default_role_ids(conn: sqlite3.Connection) -> List[int]:
 
 
 def _oidc_get_or_create_user(conn: sqlite3.Connection, email: str, name: str) -> int:
-    row = conn.execute(
-        "SELECT id, is_admin FROM auth_users WHERE lower(email) = ?",
-        (email.lower(),),
-    ).fetchone()
+    is_admin_column = _table_has_column(conn, "auth_users", "is_admin")
+    if is_admin_column:
+        row = conn.execute(
+            "SELECT id, is_admin FROM auth_users WHERE lower(email) = ?",
+            (email.lower(),),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id FROM auth_users WHERE lower(email) = ?",
+            (email.lower(),),
+        ).fetchone()
     now = now_iso()
     if row:
+        row_is_admin = bool(row["is_admin"]) if is_admin_column else False
         if name:
             conn.execute(
                 "UPDATE auth_users SET name = ?, updated_at = ? WHERE id = ?",
@@ -1787,12 +1806,11 @@ def _oidc_get_or_create_user(conn: sqlite3.Connection, email: str, name: str) ->
             ("admin",),
         ).fetchone()
         has_admin_role = admin_role and admin_role["id"] in role_ids
-        if not row["is_admin"] and not has_admin_role and not role_ids:
+        if not row_is_admin and not has_admin_role and not role_ids:
             _set_user_roles(conn, row["id"], _oidc_default_role_ids(conn))
         return row["id"]
     password_hash = hash_password(secrets.token_urlsafe(24))
     is_active_column = _table_has_column(conn, "auth_users", "is_active")
-    is_admin_column = _table_has_column(conn, "auth_users", "is_admin")
     columns = ["name", "email", "password_hash"]
     values: List[Any] = [name or email, email.lower(), password_hash]
     if is_active_column:
