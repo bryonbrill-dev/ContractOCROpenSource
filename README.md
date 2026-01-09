@@ -8,6 +8,42 @@ This FastAPI + vanilla JS app ingests contracts, runs OCR, extracts key dates/te
 3. Run the API: `uvicorn app:app --host 0.0.0.0 --port 8080`.
 4. Open `ui/index.html` in your browser (or serve it from any static host) and set the API base to your running server (default `http://localhost:8080`).
 
+## HTTPS setup (for `AUTH_COOKIE_SECURE=true`)
+If you're using secure cookies or calling the API over HTTPS (for example `https://<your-ip>:8080`), run **both** the API and UI over TLS.
+
+### 1) Use the bundled localhost TLS certificates (dev only)
+This repo now includes a **dummy localhost** certificate/key pair under `certs/` for local testing on Windows. You can point both the API and UI at these files:
+
+```
+certs/localhost-cert.pem
+certs/localhost-key.pem
+```
+
+> For production, replace these with real certificates from your PKI/Let's Encrypt.
+
+### 2) Start the HTTPS API
+Set the cert/key variables and run the API:
+
+```bat
+set SSL_CERTFILE=C:\ContractsOCR\Workarea\certs\localhost-cert.pem
+set SSL_KEYFILE=C:\ContractsOCR\Workarea\certs\localhost-key.pem
+set AUTH_COOKIE_SECURE=true
+API_Enhanced.bat
+```
+
+The API will listen on `https://<your-ip>:8080`.
+
+### 3) Start the HTTPS UI
+Set the UI cert/key variables and launch the HTTPS UI server:
+
+```bat
+set UI_SSL_CERTFILE=C:\ContractsOCR\Workarea\certs\localhost-cert.pem
+set UI_SSL_KEYFILE=C:\ContractsOCR\Workarea\certs\localhost-key.pem
+start-UI.bat
+```
+
+The UI will be available at `https://<your-ip>:3000`, and API requests will default to `https://<your-ip>:8080` unless you override `window.API_BASE` in `ui/config.js`.
+
 ## Azure AD OIDC login
 You can enable Microsoft Entra ID (Azure AD) OIDC login alongside the local admin account (for break-glass access).
 
