@@ -98,6 +98,7 @@ app.add_middleware(
 # Agreement types (LinkSquares-style)
 # ----------------------------
 AGREEMENT_TYPES = [
+    "Agreement Types",
     "Addendum",
     "Amendment",
     "Assignment",
@@ -107,7 +108,9 @@ AGREEMENT_TYPES = [
     "Consent Agreement",
     "Consulting Agreement",
     "Contract Agreement",
+    "Contractor Agreeement",
     "Corporate Agreement",
+    "Data AGreement",
     "Data Agreement",
     "Employment Agreement",
     "Financial Agreement",
