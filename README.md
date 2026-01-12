@@ -92,6 +92,39 @@ Use the Planner to manage events across all contracts:
 * Agreement types are available at `GET /api/agreement-types` and include “Uncategorized”.
 * Term definitions are available at `GET /api/terms/definitions`; seeds include Effective Date, Renewal Date, Termination Date, Auto-Renew Opt-Out, Governing Law, Payment Terms, and “Extraction Sensitivity”.
 
+Agreement types currently supported:
+* Agreement Types
+* Addendum
+* Amendment
+* Assignment
+* Business Associate Agreement
+* Certificate of Insurance
+* CNDA
+* Consent Agreement
+* Consulting Agreement
+* Contract Agreement
+* Contractor Agreeement
+* Corporate Agreement
+* Data AGreement
+* Data Agreement
+* Employment Agreement
+* Financial Agreement
+* Letter
+* Master Agreement
+* Mutual Non Disclosure Agreement
+* Non Disclosure Agreement
+* Order Form
+* Property Agreement
+* Publishing Agreement
+* Reference
+* Release Agreement
+* Requisition Document
+* Sales Agreement
+* Service Agreement
+* Statement of Work
+* Terms and Conditions
+* Uncategorized
+
 ## Glossary & behaviors
 The UI and API use the following domain terms and actions. This section is meant to answer “what does this word mean in this app?”
 
