@@ -97,7 +97,7 @@ app.add_middleware(
 # ----------------------------
 # Agreement types (LinkSquares-style)
 # ----------------------------
-AGREEMENT_TYPES = [
+DEFAULT_AGREEMENT_TYPES = [
     "Agreement Types",
     "Addendum",
     "Amendment",
@@ -130,6 +130,20 @@ AGREEMENT_TYPES = [
     "Terms and Conditions",
     "Uncategorized",
 ]
+
+DEFAULT_AGREEMENT_TYPE_KEYWORDS = {
+    "Mutual Non Disclosure Agreement": ["mutual non disclosure", "mutual non-disclosure", "mutual nda"],
+    "Non Disclosure Agreement": ["non-disclosure", "nda", "confidential"],
+    "Employment Agreement": ["employment", "offer letter"],
+    "Service Agreement": ["service agreement", "services agreement"],
+    "Statement of Work": ["statement of work", "sow"],
+    "Master Agreement": ["master agreement", "msa"],
+    "Addendum": ["addendum"],
+    "Amendment": ["amendment"],
+    "Consulting Agreement": ["consulting"],
+    "Certificate of Insurance": ["certificate of insurance"],
+    "Order Form": ["order form", "purchase order"],
+}
 
 # ----------------------------
 # Startup / Shutdown / Middleware
@@ -395,6 +409,36 @@ def init_db():
         _apply_migrations(conn)
 
 
+def _seed_agreement_types(conn: sqlite3.Connection) -> None:
+    existing = conn.execute("SELECT COUNT(1) AS count FROM agreement_types").fetchone()
+    if existing and existing["count"] == 0:
+        conn.executemany(
+            "INSERT INTO agreement_types (name, created_at) VALUES (?, ?)",
+            [(name, now_iso()) for name in DEFAULT_AGREEMENT_TYPES],
+        )
+    keyword_count = conn.execute(
+        "SELECT COUNT(1) AS count FROM agreement_type_keywords"
+    ).fetchone()
+    if keyword_count and keyword_count["count"] == 0:
+        rows = conn.execute("SELECT id, name FROM agreement_types").fetchall()
+        type_ids = {row["name"]: row["id"] for row in rows}
+        keyword_rows = []
+        for name, keywords in DEFAULT_AGREEMENT_TYPE_KEYWORDS.items():
+            type_id = type_ids.get(name)
+            if not type_id:
+                continue
+            for keyword in keywords:
+                keyword_rows.append((type_id, keyword, now_iso()))
+        if keyword_rows:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO agreement_type_keywords (agreement_type_id, keyword, created_at)
+                VALUES (?, ?, ?)
+                """,
+                keyword_rows,
+            )
+
+
 def _apply_migrations(conn: sqlite3.Connection) -> None:
     """Apply simple, idempotent schema migrations for existing databases."""
 
@@ -435,6 +479,34 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_tag_roles_role ON tag_roles(role_id);
             """
         )
+
+    if not has_table("agreement_types"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS agreement_types (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              created_at TEXT NOT NULL
+            );
+            """
+        )
+    if not has_table("agreement_type_keywords"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS agreement_type_keywords (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              agreement_type_id INTEGER NOT NULL REFERENCES agreement_types(id) ON DELETE CASCADE,
+              keyword TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_agreement_type_keywords_type
+              ON agreement_type_keywords(agreement_type_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_agreement_type_keywords_type_keyword
+              ON agreement_type_keywords(agreement_type_id, keyword);
+            """
+        )
+
+    _seed_agreement_types(conn)
 
     conn.execute(
         """
@@ -692,6 +764,23 @@ class TagCreate(BaseModel):
 class TagUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+
+
+class AgreementTypeCreate(BaseModel):
+    name: str
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
+class AgreementTypeKeywordCreate(BaseModel):
+    agreement_type_id: int
+    keyword: str
+
+    @field_validator("keyword", mode="before")
+    def normalize_keyword(cls, value: str) -> str:
+        return str(value or "").strip()
 
 
 class NotificationUserCreate(BaseModel):
@@ -1082,6 +1171,21 @@ CREATE TABLE IF NOT EXISTS tag_keywords (
 CREATE INDEX IF NOT EXISTS idx_tag_keywords_tag ON tag_keywords(tag_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_tag_keywords_tag_keyword ON tag_keywords(tag_id, keyword);
 
+CREATE TABLE IF NOT EXISTS agreement_types (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agreement_type_keywords (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agreement_type_id INTEGER NOT NULL REFERENCES agreement_types(id) ON DELETE CASCADE,
+  keyword TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agreement_type_keywords_type ON agreement_type_keywords(agreement_type_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_agreement_type_keywords_type_keyword ON agreement_type_keywords(agreement_type_id, keyword);
+
 CREATE TABLE IF NOT EXISTS ocr_pages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
@@ -1447,28 +1551,31 @@ def auto_tag_contract(contract_id: str, ocr_text: str):
 def detect_agreement_type(ocr_text: str, filename: str) -> str:
     text_lower = (ocr_text + " " + filename).lower()
 
-    if "non-disclosure" in text_lower or "nda" in text_lower or "confidential" in text_lower:
-        if "mutual" in text_lower:
-            return "Mutual Non Disclosure Agreement"
-        return "Non Disclosure Agreement"
-    if "employment" in text_lower or "offer letter" in text_lower:
-        return "Employment Agreement"
-    if "service agreement" in text_lower or "services agreement" in text_lower:
-        return "Service Agreement"
-    if "statement of work" in text_lower or "sow" in text_lower:
-        return "Statement of Work"
-    if "master agreement" in text_lower or "msa" in text_lower:
-        return "Master Agreement"
-    if "addendum" in text_lower:
-        return "Addendum"
-    if "amendment" in text_lower:
-        return "Amendment"
-    if "consulting" in text_lower:
-        return "Consulting Agreement"
-    if "certificate of insurance" in text_lower:
-        return "Certificate of Insurance"
-    if "order form" in text_lower or "purchase order" in text_lower:
-        return "Order Form"
+    matches: Dict[str, int] = {}
+    type_names: Dict[str, str] = {}
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT at.name, ak.keyword
+            FROM agreement_types at
+            LEFT JOIN agreement_type_keywords ak ON ak.agreement_type_id = at.id
+            """
+        ).fetchall()
+        for row in rows:
+            name = row["name"]
+            type_names[name.lower()] = name
+            keyword = (row["keyword"] or "").strip()
+            if not keyword:
+                continue
+            if keyword.lower() in text_lower:
+                matches[name] = max(matches.get(name, 0), len(keyword))
+
+    if matches:
+        return max(matches, key=matches.get)
+
+    for lower_name, name in type_names.items():
+        if lower_name and lower_name in text_lower and name not in {"Agreement Types"}:
+            return name
     return "Uncategorized"
 
 
@@ -1856,7 +1963,80 @@ def _oidc_get_or_create_user(conn: sqlite3.Connection, email: str, name: str) ->
 # ----------------------------
 @app.get("/api/agreement-types")
 def get_agreement_types():
-    return AGREEMENT_TYPES
+    with db() as conn:
+        rows = conn.execute("SELECT name FROM agreement_types ORDER BY name").fetchall()
+        return [row["name"] for row in rows]
+
+
+@app.post("/api/agreement-types")
+def create_agreement_type(
+    payload: AgreementTypeCreate, _: Dict[str, Any] = Depends(require_admin)
+):
+    name = payload.name
+    if not name:
+        raise HTTPException(status_code=400, detail="Agreement type name is required")
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO agreement_types (name, created_at) VALUES (?, ?)",
+            (name, now_iso()),
+        )
+        return {"id": cur.lastrowid, "name": name}
+
+
+@app.delete("/api/agreement-types/{agreement_type_id}")
+def delete_agreement_type(agreement_type_id: int, _: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        conn.execute("DELETE FROM agreement_types WHERE id = ?", (agreement_type_id,))
+        return {"deleted": agreement_type_id}
+
+
+@app.get("/api/agreement-type-keywords")
+def list_agreement_type_keywords(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        types = conn.execute(
+            "SELECT id, name FROM agreement_types ORDER BY name"
+        ).fetchall()
+        keywords = conn.execute(
+            """
+            SELECT id, agreement_type_id, keyword
+            FROM agreement_type_keywords
+            ORDER BY keyword
+            """
+        ).fetchall()
+        keyword_map: Dict[int, List[Dict[str, Any]]] = {}
+        for row in keywords:
+            keyword_map.setdefault(row["agreement_type_id"], []).append(
+                {"id": row["id"], "keyword": row["keyword"]}
+            )
+        return [
+            {"id": row["id"], "name": row["name"], "keywords": keyword_map.get(row["id"], [])}
+            for row in types
+        ]
+
+
+@app.post("/api/agreement-type-keywords")
+def create_agreement_type_keyword(
+    payload: AgreementTypeKeywordCreate, _: Dict[str, Any] = Depends(require_admin)
+):
+    keyword = payload.keyword
+    if not keyword:
+        raise HTTPException(status_code=400, detail="Keyword is required")
+    with db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO agreement_type_keywords (agreement_type_id, keyword, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (payload.agreement_type_id, keyword, now_iso()),
+        )
+        return {"id": cur.lastrowid, "agreement_type_id": payload.agreement_type_id, "keyword": keyword}
+
+
+@app.delete("/api/agreement-type-keywords/{keyword_id}")
+def delete_agreement_type_keyword(keyword_id: int, _: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        conn.execute("DELETE FROM agreement_type_keywords WHERE id = ?", (keyword_id,))
+        return {"deleted": keyword_id}
 
 
 @app.get("/api/tags")

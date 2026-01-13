@@ -67,6 +67,25 @@ CREATE INDEX IF NOT EXISTS idx_tag_keywords_tag ON tag_keywords(tag_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_tag_keywords_tag_keyword ON tag_keywords(tag_id, keyword);
 
 -- =========================
+-- Agreement types + keywords
+-- =========================
+CREATE TABLE IF NOT EXISTS agreement_types (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agreement_type_keywords (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agreement_type_id INTEGER NOT NULL REFERENCES agreement_types(id) ON DELETE CASCADE,
+  keyword       TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agreement_type_keywords_type ON agreement_type_keywords(agreement_type_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_agreement_type_keywords_type_keyword ON agreement_type_keywords(agreement_type_id, keyword);
+
+-- =========================
 -- OCR text (per page)
 -- =========================
 CREATE TABLE IF NOT EXISTS ocr_pages (
