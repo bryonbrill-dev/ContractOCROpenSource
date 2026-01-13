@@ -946,6 +946,30 @@
         </table>
         <div id="adminTagStatus" class="muted small" style="margin-top:6px;"></div>
       </div>
+
+      <div class="section">
+        <h4>Agreement types & keywords</h4>
+        <div class="muted small" style="margin-top:6px;">
+          Maintain agreement type labels and the keywords used for auto-detection in searches.
+        </div>
+        <div class="row wrap" style="margin-top:10px;">
+          <label class="col small">New agreement type
+            <input id="adminAgreementTypeName" class="muted-input" placeholder="e.g., Data Processing Agreement" />
+          </label>
+          <button id="adminAgreementTypeAdd">Add type</button>
+          <div id="adminAgreementTypeStatus" class="muted small"></div>
+        </div>
+        <table class="compact-table" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Keywords</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="adminAgreementTypesTable"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 

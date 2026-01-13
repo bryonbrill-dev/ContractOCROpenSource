@@ -6,6 +6,7 @@ const state = {
   tags: [],
   roles: [],
   agreementTypes: [],
+  agreementTypeCatalog: [],
   contracts: [],
   allContracts: [],
   allContractsQuery: "",
@@ -731,6 +732,37 @@ async function deleteRole(roleId) {
   await apiFetch(`/api/roles/${roleId}`, { method: "DELETE" });
 }
 
+async function createAgreementType(payload) {
+  const res = await apiFetch("/api/agreement-types", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function deleteAgreementType(typeId) {
+  await apiFetch(`/api/agreement-types/${typeId}`, { method: "DELETE" });
+}
+
+async function fetchAgreementTypeKeywords() {
+  const res = await apiFetch("/api/agreement-type-keywords");
+  return res.json();
+}
+
+async function createAgreementTypeKeyword(payload) {
+  const res = await apiFetch("/api/agreement-type-keywords", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function deleteAgreementTypeKeyword(keywordId) {
+  await apiFetch(`/api/agreement-type-keywords/${keywordId}`, { method: "DELETE" });
+}
+
 async function fetchTagPermissions() {
   const res = await apiFetch("/api/tag-permissions");
   return res.json();
@@ -1024,8 +1056,6 @@ async function loadRecent() {
             <a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>
             &nbsp;|&nbsp;
             <a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>
-            &nbsp;|&nbsp;
-            <button class="delete-contract danger" data-id="${id}" data-title="${escapeHtml(title)}">Delete</button>
           </td>
         </tr>
       `;
@@ -1039,11 +1069,6 @@ async function loadRecent() {
     });
   });
 
-  document.querySelectorAll(".delete-contract").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await deleteContract(btn.dataset.id, btn.dataset.title);
-    });
-  });
   updateSelectedRows();
 }
 
@@ -1074,8 +1099,6 @@ function renderAllContractsTable(rows, append = false) {
             <a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>
             &nbsp;|&nbsp;
             <button class="reprocess-btn" data-id="${id}">Reprocess</button>
-            &nbsp;|&nbsp;
-            <button class="delete-contract danger" data-id="${id}" data-title="${escapeHtml(title)}">Delete</button>
           </td>
         </tr>
       `;
@@ -1099,12 +1122,6 @@ function renderAllContractsTable(rows, append = false) {
   document.querySelectorAll(".reprocess-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await reprocessContract(btn.dataset.id);
-    });
-  });
-
-  document.querySelectorAll(".delete-contract").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await deleteContract(btn.dataset.id, btn.dataset.title);
     });
   });
 
@@ -1329,13 +1346,7 @@ function renderContractDetail(data) {
         .join("")
     : `<div class="muted small">No events. Add one manually below.</div>`;
 
-  const actionButtons =
-    c.status === "processed"
-      ? `<button id="deleteContract" class="danger">Delete</button>`
-      : `
-        <button id="reprocessContract">Reprocess</button>
-        <button id="deleteContract" class="danger">Delete</button>
-      `;
+  const actionButtons = c.status === "processed" ? "" : `<button id="reprocessContract">Reprocess</button>`;
 
   $("detail").innerHTML = `
     <div><b>${c.title || c.original_filename || c.id}</b></div>
@@ -1497,7 +1508,6 @@ function renderContractDetail(data) {
   });
 
   $("reprocessContract")?.addEventListener("click", () => reprocessContract(c.id));
-  $("deleteContract")?.addEventListener("click", () => deleteContract(c.id, c.title || c.original_filename || c.id));
 
   const contentDetails = $("contractContent");
   if (contentDetails) {
@@ -2417,20 +2427,117 @@ function renderAdminTagPermissions() {
   });
 }
 
+function renderAdminAgreementTypes() {
+  const tbody = $("adminAgreementTypesTable");
+  if (!tbody) return;
+  if (!state.agreementTypeCatalog.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="muted small">No agreement types configured yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.agreementTypeCatalog
+    .map((type) => {
+      const keywordChips = type.keywords?.length
+        ? type.keywords
+            .map(
+              (keyword) => `
+                <span class="pill" style="display:inline-flex; align-items:center; gap:4px;">
+                  ${escapeHtml(keyword.keyword)}
+                  <button class="chip-btn admin-agreement-keyword-delete" data-keyword-id="${keyword.id}" title="Remove keyword">
+                    ×
+                  </button>
+                </span>
+              `,
+            )
+            .join(" ")
+        : `<span class="muted small">No keywords yet.</span>`;
+      return `
+        <tr>
+          <td>${escapeHtml(type.name || "")}</td>
+          <td>
+            <div class="row wrap" style="gap:6px;">${keywordChips}</div>
+            <div class="row wrap" style="gap:6px; margin-top:6px;">
+              <input id="agreementTypeKeyword-${type.id}" class="muted-input" placeholder="Add keyword" />
+              <button class="small admin-agreement-keyword-add" data-type-id="${type.id}">Add</button>
+            </div>
+          </td>
+          <td>
+            <button class="small danger admin-agreement-type-delete" data-type-id="${type.id}">
+              Delete
+            </button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  document.querySelectorAll(".admin-agreement-type-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const typeId = Number(btn.dataset.typeId);
+      const type = state.agreementTypeCatalog.find((entry) => entry.id === typeId);
+      const confirmed = await showConfirm(`Delete agreement type "${type?.name || typeId}"?`, {
+        title: "Delete agreement type",
+      });
+      if (!confirmed) return;
+      await deleteAgreementType(typeId);
+      await loadAgreementTypeCatalog();
+    });
+  });
+
+  document.querySelectorAll(".admin-agreement-keyword-add").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const typeId = Number(btn.dataset.typeId);
+      const input = $(`agreementTypeKeyword-${typeId}`);
+      const keyword = input?.value.trim() || "";
+      const status = $("adminAgreementTypeStatus");
+      if (!keyword) {
+        if (status) status.textContent = "Keyword is required.";
+        return;
+      }
+      try {
+        await createAgreementTypeKeyword({ agreement_type_id: typeId, keyword });
+        if (input) input.value = "";
+        await loadAgreementTypeCatalog();
+        if (status) status.textContent = "Keyword added.";
+      } catch (err) {
+        if (status) status.textContent = err.message || "Unable to add keyword.";
+      }
+    });
+  });
+
+  document.querySelectorAll(".admin-agreement-keyword-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const keywordId = Number(btn.dataset.keywordId);
+      await deleteAgreementTypeKeyword(keywordId);
+      await loadAgreementTypeCatalog();
+    });
+  });
+}
+
+async function loadAgreementTypeCatalog() {
+  const catalog = await fetchAgreementTypeKeywords();
+  state.agreementTypeCatalog = catalog || [];
+  state.agreementTypes = state.agreementTypeCatalog.map((entry) => entry.name);
+  renderAdminAgreementTypes();
+}
+
 async function loadAdminData() {
-  const [users, roles, tags, permissions] = await Promise.all([
+  const [users, roles, tags, permissions, agreementTypes] = await Promise.all([
     fetchAdminUsers(),
     apiFetch("/api/roles").then((res) => res.json()),
     apiFetch("/api/tags").then((res) => res.json()),
     fetchTagPermissions(),
+    fetchAgreementTypeKeywords(),
   ]);
   state.adminUsers = users;
   state.roles = roles;
   state.tags = tags;
   state.tagPermissions = permissions || {};
+  state.agreementTypeCatalog = agreementTypes || [];
+  state.agreementTypes = state.agreementTypeCatalog.map((entry) => entry.name);
   renderAdminUsers();
   renderAdminRoles();
   renderAdminTagPermissions();
+  renderAdminAgreementTypes();
   resetAdminUserForm();
   resetAdminRoleForm();
 }
@@ -2498,6 +2605,24 @@ function initAdminUi() {
       if (status) status.textContent = "Role saved.";
     } catch (err) {
       if (status) status.textContent = err.message || "Unable to save role.";
+    }
+  });
+
+  $("adminAgreementTypeAdd")?.addEventListener("click", async () => {
+    const name = $("adminAgreementTypeName")?.value.trim() || "";
+    const status = $("adminAgreementTypeStatus");
+    if (!name) {
+      if (status) status.textContent = "Agreement type name is required.";
+      return;
+    }
+    try {
+      await createAgreementType({ name });
+      const input = $("adminAgreementTypeName");
+      if (input) input.value = "";
+      await loadAgreementTypeCatalog();
+      if (status) status.textContent = "Agreement type added.";
+    } catch (err) {
+      if (status) status.textContent = err.message || "Unable to add agreement type.";
     }
   });
 }
