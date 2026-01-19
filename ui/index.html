@@ -879,6 +879,26 @@
       </div>
 
       <div class="section">
+        <h4>New user signup notifications</h4>
+        <div class="muted small" style="margin-top:6px;">
+          Send an email when a user is created via Microsoft sign-in.
+        </div>
+        <div class="row wrap" style="margin-top:8px;">
+          <label class="col small">Notification email
+            <input
+              id="adminNewUserNotificationEmail"
+              class="muted-input"
+              placeholder="placeholder@gmail.com"
+            />
+          </label>
+        </div>
+        <div class="row wrap" style="margin-top:8px;">
+          <button id="adminNewUserNotificationSave">Save notification email</button>
+          <div id="adminNewUserNotificationStatus" class="muted small"></div>
+        </div>
+      </div>
+
+      <div class="section">
         <h4>Users</h4>
         <div class="row wrap">
           <label class="col small">Name
@@ -897,10 +917,32 @@
         </div>
         <div class="small muted" style="margin-top:8px;">Assign roles</div>
         <div id="adminUserRoles" class="row wrap" style="margin-top:6px;"></div>
-        <div class="small muted" style="margin-top:12px;">Assign profit centers</div>
-        <select id="adminUserProfitCenters" class="multi-select" multiple size="8" style="margin-top:6px;"></select>
-        <div class="small muted" style="margin-top:12px;">Assign profit center groups</div>
-        <select id="adminUserProfitCenterGroups" class="multi-select" multiple size="6" style="margin-top:6px;"></select>
+        <details class="section" open style="margin-top:12px;">
+          <summary class="small">
+            <span class="summary-chevron" aria-hidden="true">▸</span>
+            <span class="summary-title">Assign profit center groups</span>
+          </summary>
+          <select
+            id="adminUserProfitCenterGroups"
+            class="multi-select"
+            multiple
+            size="6"
+            style="margin-top:6px;"
+          ></select>
+        </details>
+        <details class="section" open style="margin-top:12px;">
+          <summary class="small">
+            <span class="summary-chevron" aria-hidden="true">▸</span>
+            <span class="summary-title">Assign profit centers</span>
+          </summary>
+          <select
+            id="adminUserProfitCenters"
+            class="multi-select"
+            multiple
+            size="8"
+            style="margin-top:6px;"
+          ></select>
+        </details>
         <div class="row wrap" style="margin-top:8px;">
           <button id="adminUserSave">Add user</button>
           <button id="adminUserCancel" class="link-button" type="button">Cancel</button>

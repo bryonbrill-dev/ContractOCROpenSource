@@ -50,6 +50,7 @@ const state = {
   adminUserEditId: null,
   adminRoleEditId: null,
   adminProfitCenterEditId: null,
+  newUserNotificationEmail: "",
   profitCenters: [],
   currentUser: null,
   authReady: false,
@@ -724,6 +725,20 @@ async function deleteNotificationUser(userId) {
 
 async function fetchAdminUsers() {
   const res = await apiFetch("/api/admin/users");
+  return res.json();
+}
+
+async function fetchNewUserNotificationEmail() {
+  const res = await apiFetch("/api/admin/new-user-notification-email");
+  return res.json();
+}
+
+async function updateNewUserNotificationEmail(email) {
+  const res = await apiFetch("/api/admin/new-user-notification-email", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
   return res.json();
 }
 
@@ -2440,6 +2455,24 @@ function getProfitCenterGroups() {
   return Array.from(new Set(groups)).sort((a, b) => a.localeCompare(b));
 }
 
+function applyProfitCenterGroupsToCenters() {
+  const groupSelect = $("adminUserProfitCenterGroups");
+  const centerSelect = $("adminUserProfitCenters");
+  if (!groupSelect || !centerSelect) return;
+  const selectedGroups = new Set(getSelectedValues("adminUserProfitCenterGroups"));
+  if (!selectedGroups.size) return;
+  const groupedIds = new Set(
+    (state.profitCenters || [])
+      .filter((center) => center.group_name && selectedGroups.has(center.group_name))
+      .map((center) => String(center.id)),
+  );
+  Array.from(centerSelect.options).forEach((option) => {
+    if (groupedIds.has(option.value)) {
+      option.selected = true;
+    }
+  });
+}
+
 function renderUserDirectories() {
   const targets = ["pendingUserDirectory", "taskUserDirectory"];
   targets.forEach((targetId) => {
@@ -2492,6 +2525,12 @@ function renderUserDirectories() {
   });
 }
 
+function renderNewUserNotificationEmail() {
+  const input = $("adminNewUserNotificationEmail");
+  if (!input) return;
+  input.value = state.newUserNotificationEmail || "";
+}
+
 function resetAdminUserForm() {
   state.adminUserEditId = null;
   const name = $("adminUserName");
@@ -2507,6 +2546,7 @@ function resetAdminUserForm() {
   renderCheckboxList("adminUserRoles", state.roles, []);
   renderMultiSelectOptions("adminUserProfitCenters", getProfitCenterOptions(), []);
   renderMultiSelectOptions("adminUserProfitCenterGroups", getProfitCenterGroups(), []);
+  applyProfitCenterGroupsToCenters();
   $("adminUserSave")?.setAttribute("data-mode", "create");
   const adminUserSave = $("adminUserSave");
   if (adminUserSave) adminUserSave.textContent = "Add user";
@@ -2533,6 +2573,7 @@ function openAdminUserEdit(user) {
     getProfitCenterGroups(),
     user.profit_center_groups || [],
   );
+  applyProfitCenterGroupsToCenters();
   $("adminUserSave")?.setAttribute("data-mode", "edit");
   const adminUserSave = $("adminUserSave");
   if (adminUserSave) adminUserSave.textContent = "Update user";
@@ -2860,14 +2901,16 @@ async function loadAgreementTypeCatalog() {
 }
 
 async function loadAdminData() {
-  const [users, roles, tags, permissions, agreementTypes, profitCenters] = await Promise.all([
-    fetchAdminUsers(),
-    apiFetch("/api/roles").then((res) => res.json()),
-    apiFetch("/api/tags").then((res) => res.json()),
-    fetchTagPermissions(),
-    fetchAgreementTypeKeywords(),
-    fetchProfitCenters(),
-  ]);
+  const [users, roles, tags, permissions, agreementTypes, profitCenters, newUserNotification] =
+    await Promise.all([
+      fetchAdminUsers(),
+      apiFetch("/api/roles").then((res) => res.json()),
+      apiFetch("/api/tags").then((res) => res.json()),
+      fetchTagPermissions(),
+      fetchAgreementTypeKeywords(),
+      fetchProfitCenters(),
+      fetchNewUserNotificationEmail(),
+    ]);
   state.adminUsers = users;
   state.roles = roles;
   state.tags = tags;
@@ -2875,6 +2918,8 @@ async function loadAdminData() {
   state.agreementTypeCatalog = agreementTypes || [];
   state.agreementTypes = state.agreementTypeCatalog.map((entry) => entry.name);
   state.profitCenters = profitCenters || [];
+  state.newUserNotificationEmail = newUserNotification?.email || "";
+  renderNewUserNotificationEmail();
   renderAdminUsers();
   renderAdminRoles();
   renderAdminTagPermissions();
@@ -2890,8 +2935,32 @@ function initAdminUi() {
   $("adminUserCancel")?.addEventListener("click", resetAdminUserForm);
   $("adminRoleCancel")?.addEventListener("click", resetAdminRoleForm);
   $("adminProfitCenterCancel")?.addEventListener("click", resetAdminProfitCenterForm);
+  $("adminUserProfitCenterGroups")?.addEventListener("change", () => {
+    applyProfitCenterGroupsToCenters();
+  });
+  $("adminNewUserNotificationSave")?.addEventListener("click", async () => {
+    const email = $("adminNewUserNotificationEmail")?.value.trim() || "";
+    const status = $("adminNewUserNotificationStatus");
+    if (!email) {
+      if (status) status.textContent = "Notification email is required.";
+      showToast("Notification email is required.", { variant: "warning" });
+      return;
+    }
+    try {
+      const response = await updateNewUserNotificationEmail(email);
+      state.newUserNotificationEmail = response.email || email;
+      renderNewUserNotificationEmail();
+      if (status) status.textContent = "Notification email saved.";
+      showToast("Notification email saved.", { variant: "success" });
+    } catch (err) {
+      const message = err.message || "Unable to save notification email.";
+      if (status) status.textContent = message;
+      showToast(message, { variant: "error" });
+    }
+  });
 
   $("adminUserSave")?.addEventListener("click", async () => {
+    applyProfitCenterGroupsToCenters();
     const name = $("adminUserName")?.value.trim() || "";
     const email = $("adminUserEmail")?.value.trim() || "";
     const password = $("adminUserPassword")?.value || "";
