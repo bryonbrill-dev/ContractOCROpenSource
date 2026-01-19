@@ -6,7 +6,7 @@ This FastAPI + vanilla JS app ingests contracts, runs OCR, extracts key dates/te
 1. Ensure Tesseract and Poppler are installed (paths are configurable via `TESSERACT_CMD` and `POPPLER_PATH` environment variables).
 2. Install dependencies: `pip install -r requirements.txt`.
 3. Run the API: `uvicorn app:app --host 0.0.0.0 --port 8080`.
-4. Open `ui/index.html` in your browser (or serve it from any static host) and set the API base to your running server (default `http://localhost:8080`).
+4. Open `ui/index.html` in your browser (or serve it from any static host) and set the API base to your running server (default `http://localhost:8080`). Authentication is required by default; set `AUTH_REQUIRED=false` only for local demos.
 
 ## HTTPS setup (for `AUTH_COOKIE_SECURE=true`)
 If you're using secure cookies or calling the API over HTTPS (for example `https://<your-ip>:8080`), run **both** the API and UI over TLS.
@@ -57,7 +57,7 @@ You can enable Microsoft Entra ID (Azure AD) OIDC login alongside the local admi
    - `OIDC_DEFAULT_ROLE_NAMES` (optional, comma-separated role names to assign on first login; defaults to `user`)
    - `OIDC_SCOPES` (optional, defaults to `openid profile email`)
 
-To start an OIDC login, navigate to `GET /api/auth/oidc/login`. On successful authentication, the API will create a local user record (if needed), assign the default roles, and set the normal session cookie.
+To start an OIDC login, navigate to `GET /api/auth/oidc/login`. You can optionally pass `return_to=<url>` (the UI sends the current page) so the callback redirects back to the app after sign-in. On successful authentication, the API will create a local user record (if needed), assign the default roles, and set the normal session cookie.
 
 ## Contracts page – manual controls
 The Contracts page now exposes several manual editing tools for cases where OCR did not detect terms or events:

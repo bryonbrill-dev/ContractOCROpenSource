@@ -970,6 +970,36 @@
           <tbody id="adminAgreementTypesTable"></tbody>
         </table>
       </div>
+
+      <div class="section">
+        <h4>Profit centers</h4>
+        <div class="muted small" style="margin-top:6px;">
+          Manage profit center numbers used to group department access.
+        </div>
+        <div class="row wrap" style="margin-top:10px;">
+          <label class="col small">Profit center code
+            <input id="adminProfitCenterCode" class="muted-input" placeholder="e.g., 1200" />
+          </label>
+          <label class="col small">Profit center name
+            <input id="adminProfitCenterName" class="muted-input" placeholder="e.g., Commercial Sales & Supply" />
+          </label>
+        </div>
+        <div class="row wrap" style="margin-top:8px;">
+          <button id="adminProfitCenterSave">Add profit center</button>
+          <button id="adminProfitCenterCancel" class="link-button" type="button">Cancel</button>
+          <div id="adminProfitCenterStatus" class="muted small"></div>
+        </div>
+        <table class="compact-table" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="adminProfitCentersTable"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 

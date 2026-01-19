@@ -86,6 +86,16 @@ CREATE INDEX IF NOT EXISTS idx_agreement_type_keywords_type ON agreement_type_ke
 CREATE UNIQUE INDEX IF NOT EXISTS ux_agreement_type_keywords_type_keyword ON agreement_type_keywords(agreement_type_id, keyword);
 
 -- =========================
+-- Profit centers
+-- =========================
+CREATE TABLE IF NOT EXISTS profit_centers (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  code          TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+
+-- =========================
 -- OCR text (per page)
 -- =========================
 CREATE TABLE IF NOT EXISTS ocr_pages (
@@ -225,6 +235,16 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_oidc_states (
+  state         TEXT PRIMARY KEY,
+  nonce         TEXT NOT NULL,
+  return_to     TEXT,
+  created_at    TEXT NOT NULL,
+  expires_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expires_at);
 
 -- =========================
 -- Notification delivery logs

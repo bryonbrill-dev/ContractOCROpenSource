@@ -49,6 +49,8 @@ const state = {
   tagPermissions: {},
   adminUserEditId: null,
   adminRoleEditId: null,
+  adminProfitCenterEditId: null,
+  profitCenters: [],
   currentUser: null,
   authReady: false,
   authRequired: false,
@@ -261,7 +263,8 @@ function initAuthUi() {
   }
   if (microsoftButton) {
     microsoftButton.addEventListener("click", () => {
-      window.location.href = `${getApiBase()}/api/auth/oidc/login`;
+      const returnTo = encodeURIComponent(window.location.href);
+      window.location.href = `${getApiBase()}/api/auth/oidc/login?return_to=${returnTo}`;
     });
   }
   if (form) {
@@ -761,6 +764,33 @@ async function createAgreementTypeKeyword(payload) {
 
 async function deleteAgreementTypeKeyword(keywordId) {
   await apiFetch(`/api/agreement-type-keywords/${keywordId}`, { method: "DELETE" });
+}
+
+async function fetchProfitCenters() {
+  const res = await apiFetch("/api/profit-centers");
+  return res.json();
+}
+
+async function createProfitCenter(payload) {
+  const res = await apiFetch("/api/profit-centers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function updateProfitCenter(profitCenterId, payload) {
+  const res = await apiFetch(`/api/profit-centers/${profitCenterId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function deleteProfitCenter(profitCenterId) {
+  await apiFetch(`/api/profit-centers/${profitCenterId}`, { method: "DELETE" });
 }
 
 async function fetchTagPermissions() {
@@ -2323,6 +2353,19 @@ function resetAdminRoleForm() {
   if (status) status.textContent = "";
 }
 
+function resetAdminProfitCenterForm() {
+  state.adminProfitCenterEditId = null;
+  const code = $("adminProfitCenterCode");
+  const name = $("adminProfitCenterName");
+  if (code) code.value = "";
+  if (name) name.value = "";
+  $("adminProfitCenterSave")?.setAttribute("data-mode", "create");
+  const adminProfitCenterSave = $("adminProfitCenterSave");
+  if (adminProfitCenterSave) adminProfitCenterSave.textContent = "Add profit center";
+  const status = $("adminProfitCenterStatus");
+  if (status) status.textContent = "";
+}
+
 function openAdminRoleEdit(role) {
   state.adminRoleEditId = role.id;
   const name = $("adminRoleName");
@@ -2334,6 +2377,19 @@ function openAdminRoleEdit(role) {
   if (adminRoleSave) adminRoleSave.textContent = "Update role";
   const status = $("adminRoleStatus");
   if (status) status.textContent = `Editing ${role.name}`;
+}
+
+function openAdminProfitCenterEdit(center) {
+  state.adminProfitCenterEditId = center.id;
+  const code = $("adminProfitCenterCode");
+  const name = $("adminProfitCenterName");
+  if (code) code.value = center.code || "";
+  if (name) name.value = center.name || "";
+  $("adminProfitCenterSave")?.setAttribute("data-mode", "edit");
+  const adminProfitCenterSave = $("adminProfitCenterSave");
+  if (adminProfitCenterSave) adminProfitCenterSave.textContent = "Update profit center";
+  const status = $("adminProfitCenterStatus");
+  if (status) status.textContent = `Editing ${center.code}`;
 }
 
 function renderAdminRoles() {
@@ -2371,6 +2427,53 @@ function renderAdminRoles() {
       );
       if (!confirmed) return;
       await deleteRole(roleId);
+      await loadAdminData();
+    });
+  });
+}
+
+function renderAdminProfitCenters() {
+  const tbody = $("adminProfitCentersTable");
+  if (!tbody) return;
+  if (!state.profitCenters.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="muted small">No profit centers configured yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.profitCenters
+    .map((center) => {
+      return `
+        <tr>
+          <td>${escapeHtml(center.code || "")}</td>
+          <td>${escapeHtml(center.name || "")}</td>
+          <td>
+            <button class="small admin-profit-center-edit" data-profit-center-id="${center.id}">
+              Edit
+            </button>
+            <button class="small danger admin-profit-center-delete" data-profit-center-id="${center.id}">
+              Delete
+            </button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+  document.querySelectorAll(".admin-profit-center-edit").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const centerId = Number(btn.dataset.profitCenterId);
+      const center = state.profitCenters.find((item) => item.id === centerId);
+      if (center) openAdminProfitCenterEdit(center);
+    });
+  });
+  document.querySelectorAll(".admin-profit-center-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const centerId = Number(btn.dataset.profitCenterId);
+      const center = state.profitCenters.find((item) => item.id === centerId);
+      const confirmed = await showConfirm(
+        `Delete profit center ${center?.code || centerId}?`,
+        { title: "Delete profit center" },
+      );
+      if (!confirmed) return;
+      await deleteProfitCenter(centerId);
       await loadAdminData();
     });
   });
@@ -2521,12 +2624,13 @@ async function loadAgreementTypeCatalog() {
 }
 
 async function loadAdminData() {
-  const [users, roles, tags, permissions, agreementTypes] = await Promise.all([
+  const [users, roles, tags, permissions, agreementTypes, profitCenters] = await Promise.all([
     fetchAdminUsers(),
     apiFetch("/api/roles").then((res) => res.json()),
     apiFetch("/api/tags").then((res) => res.json()),
     fetchTagPermissions(),
     fetchAgreementTypeKeywords(),
+    fetchProfitCenters(),
   ]);
   state.adminUsers = users;
   state.roles = roles;
@@ -2534,18 +2638,22 @@ async function loadAdminData() {
   state.tagPermissions = permissions || {};
   state.agreementTypeCatalog = agreementTypes || [];
   state.agreementTypes = state.agreementTypeCatalog.map((entry) => entry.name);
+  state.profitCenters = profitCenters || [];
   renderAdminUsers();
   renderAdminRoles();
   renderAdminTagPermissions();
   renderAdminAgreementTypes();
+  renderAdminProfitCenters();
   resetAdminUserForm();
   resetAdminRoleForm();
+  resetAdminProfitCenterForm();
 }
 
 function initAdminUi() {
   $("adminRefresh")?.addEventListener("click", loadAdminData);
   $("adminUserCancel")?.addEventListener("click", resetAdminUserForm);
   $("adminRoleCancel")?.addEventListener("click", resetAdminRoleForm);
+  $("adminProfitCenterCancel")?.addEventListener("click", resetAdminProfitCenterForm);
 
   $("adminUserSave")?.addEventListener("click", async () => {
     const name = $("adminUserName")?.value.trim() || "";
@@ -2605,6 +2713,27 @@ function initAdminUi() {
       if (status) status.textContent = "Role saved.";
     } catch (err) {
       if (status) status.textContent = err.message || "Unable to save role.";
+    }
+  });
+
+  $("adminProfitCenterSave")?.addEventListener("click", async () => {
+    const code = $("adminProfitCenterCode")?.value.trim() || "";
+    const name = $("adminProfitCenterName")?.value.trim() || "";
+    const status = $("adminProfitCenterStatus");
+    if (!code || !name) {
+      if (status) status.textContent = "Profit center code and name are required.";
+      return;
+    }
+    try {
+      if (state.adminProfitCenterEditId) {
+        await updateProfitCenter(state.adminProfitCenterEditId, { code, name });
+      } else {
+        await createProfitCenter({ code, name });
+      }
+      await loadAdminData();
+      if (status) status.textContent = "Profit center saved.";
+    } catch (err) {
+      if (status) status.textContent = err.message || "Unable to save profit center.";
     }
   });
 
