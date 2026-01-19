@@ -4067,7 +4067,7 @@ async def upload_contract(
 def reprocess_single_contract(
     contract_id: str,
     request: Request,
-    _: Dict[str, Any] = Depends(require_user),
+    _: Dict[str, Any] = Depends(require_admin),
 ):
     with db() as conn:
         context = _get_visibility_context(conn, request)
@@ -4081,7 +4081,7 @@ def reprocess_contracts(
     status: Optional[str] = None,
     agreement_type: Optional[str] = None,
     all: bool = False,
-    _: Dict[str, Any] = Depends(require_user),
+    _: Dict[str, Any] = Depends(require_admin),
 ):
     limit = max(1, min(limit, 500))
 
@@ -4209,7 +4209,7 @@ def _get_visibility_context(
     role_ids = _get_user_role_ids(conn, user["id"])
     profit_center_ids = _get_user_profit_center_ids(conn, user["id"])
     profit_center_groups = _get_user_profit_center_groups(conn, user["id"])
-    is_admin = "admin" in user.get("roles", [])
+    is_admin = bool(user.get("is_admin")) or "admin" in user.get("roles", [])
     return {
         "user_role_ids": role_ids,
         "user_profit_center_ids": profit_center_ids,
@@ -4240,23 +4240,24 @@ def _filter_contract_visibility(
         tuple(contract_ids),
     ).fetchall()
     restricted_ids = {row["contract_id"] for row in restricted_rows}
-    if not restricted_ids:
-        visible_ids: Set[str] = set(contract_ids)
-    if not user_role_ids:
-        visible_ids = {cid for cid in contract_ids if cid not in restricted_ids}
-    role_placeholders = ",".join("?" for _ in user_role_ids)
-    visible_rows = conn.execute(
-        f"""
-        SELECT DISTINCT ct.contract_id
-        FROM contract_tags ct
-        JOIN tag_roles tr ON tr.tag_id = ct.tag_id
-        WHERE ct.contract_id IN ({placeholders})
-          AND tr.role_id IN ({role_placeholders})
-        """,
-        tuple(contract_ids) + tuple(user_role_ids),
-    ).fetchall()
-    visible_ids = {row["contract_id"] for row in visible_rows}
-    visible_ids = {cid for cid in contract_ids if cid not in restricted_ids or cid in visible_ids}
+    if restricted_ids:
+        role_visible_ids: Set[str] = set()
+        if user_role_ids:
+            role_placeholders = ",".join("?" for _ in user_role_ids)
+            visible_rows = conn.execute(
+                f"""
+                SELECT DISTINCT ct.contract_id
+                FROM contract_tags ct
+                JOIN tag_roles tr ON tr.tag_id = ct.tag_id
+                WHERE ct.contract_id IN ({placeholders})
+                  AND tr.role_id IN ({role_placeholders})
+                """,
+                tuple(contract_ids) + tuple(user_role_ids),
+            ).fetchall()
+            role_visible_ids = {row["contract_id"] for row in visible_rows}
+        visible_ids = (set(contract_ids) - restricted_ids) | role_visible_ids
+    else:
+        visible_ids = set(contract_ids)
 
     assigned_rows = conn.execute(
         f"""
@@ -4267,11 +4268,8 @@ def _filter_contract_visibility(
         tuple(contract_ids),
     ).fetchall()
     assigned_ids = {row["contract_id"] for row in assigned_rows}
-    if not assigned_ids:
-        return [cid for cid in contract_ids if cid in visible_ids]
-
     unassigned_ids = set(contract_ids) - assigned_ids
-    allowed_ids = set(unassigned_ids)
+    allowed_ids: Set[str] = set()
     if user_profit_center_ids or user_profit_center_groups:
         center_placeholders = ",".join("?" for _ in user_profit_center_ids) or "NULL"
         group_placeholders = ",".join("?" for _ in user_profit_center_groups) or "NULL"
@@ -4290,6 +4288,10 @@ def _filter_contract_visibility(
         ).fetchall()
         allowed_ids.update(row["contract_id"] for row in allowed_rows)
 
+    role_restricted_unassigned = {
+        cid for cid in unassigned_ids if cid in restricted_ids and cid in visible_ids
+    }
+    allowed_ids.update(role_restricted_unassigned)
     visible_ids = visible_ids & allowed_ids
     return [cid for cid in contract_ids if cid in visible_ids]
 
@@ -4311,6 +4313,28 @@ def _ensure_contract_visibility(
     )
     if contract_id not in visible_ids:
         raise HTTPException(status_code=404, detail="Contract not found")
+
+
+def _load_contract_profit_centers_for_list(
+    conn: sqlite3.Connection, contract_ids: List[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    if not contract_ids:
+        return {}
+    placeholders = ",".join("?" for _ in contract_ids)
+    rows = conn.execute(
+        f"""
+        SELECT cpc.contract_id, pc.id, pc.code, pc.name, pc.group_name
+        FROM contract_profit_centers cpc
+        JOIN profit_centers pc ON pc.id = cpc.profit_center_id
+        WHERE cpc.contract_id IN ({placeholders})
+        ORDER BY pc.group_name ASC, pc.code ASC
+        """,
+        tuple(contract_ids),
+    ).fetchall()
+    profit_centers: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        profit_centers.setdefault(row["contract_id"], []).append(dict(row))
+    return profit_centers
 
 # ----------------------------
 # List contracts
@@ -4405,6 +4429,12 @@ def list_contracts(
                 )
             )
             result = [item for item in result if item["id"] in visible_ids]
+        if result:
+            profit_center_map = _load_contract_profit_centers_for_list(
+                conn, [item["id"] for item in result]
+            )
+            for item in result:
+                item["profit_centers"] = profit_center_map.get(item["id"], [])
         if not include_tags:
             return result
 
@@ -4840,7 +4870,7 @@ def view_original(
 def download_contract(
     contract_id: str,
     request: Request,
-    _: Dict[str, Any] = Depends(require_user),
+    _: Dict[str, Any] = Depends(require_admin),
 ):
     with db() as conn:
         context = _get_visibility_context(conn, request)

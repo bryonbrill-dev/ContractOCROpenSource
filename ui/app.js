@@ -1065,6 +1065,18 @@ function statusPill(status) {
   return `<span class="pill ${cls}">${label}</span>`;
 }
 
+function formatProfitCentersSummary(centers) {
+  if (!Array.isArray(centers) || !centers.length) return "Unassigned";
+  const labels = centers.map((center) => {
+    const code = center.code ? `${center.code}` : "";
+    const name = center.name ? ` — ${center.name}` : "";
+    return `${code}${name}`.trim();
+  });
+  const shown = labels.slice(0, 2);
+  const remaining = labels.length - shown.length;
+  return remaining > 0 ? `${shown.join(", ")} (+${remaining} more)` : shown.join(", ");
+}
+
 function optionList(values, selectedValue) {
   return values
     .map((v) => `<option value="${v}" ${v === selectedValue ? "selected" : ""}>${v}</option>`)
@@ -1105,6 +1117,7 @@ async function loadRecent() {
   const rows = await res.json();
   const processedRows = rows.filter((row) => (row.status || "").toLowerCase() === "processed").slice(0, 5);
   state.contracts = processedRows;
+  const isAdmin = isAdminUser();
 
   if (!processedRows.length) {
     tbody.innerHTML = `<tr><td colspan="4" class="muted">No processed contracts yet.</td></tr>`;
@@ -1118,15 +1131,19 @@ async function loadRecent() {
       const shortTitle = abbreviateText(title, 32);
       const uploaded = r.uploaded_at || "";
       const activeClass = id === state.selectedContractId ? "active-row" : "";
+      const actions = [
+        `<a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>`,
+        isAdmin ? `<a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>` : null,
+      ]
+        .filter(Boolean)
+        .join("&nbsp;|&nbsp;");
       return `
         <tr data-contract-id="${id}" class="${activeClass}">
           <td>${badge(r.status)}</td>
           <td><a href="#" data-id="${id}" class="open" title="${escapeHtml(title)}">${shortTitle}</a></td>
           <td class="small">${uploaded}</td>
           <td class="small">
-            <a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>
-            &nbsp;|&nbsp;
-            <a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>
+            ${actions}
           </td>
         </tr>
       `;
@@ -1147,29 +1164,34 @@ function renderAllContractsTable(rows, append = false) {
   const tbody = $("allContractsTable");
   if (!tbody) return;
   if (!rows.length && !append) {
-    tbody.innerHTML = `<tr><td colspan="6" class="muted">No contracts found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">No contracts found.</td></tr>`;
     return;
   }
 
+  const isAdmin = isAdminUser();
   const html = rows
     .map((r) => {
       const id = r.id;
       const title = r.title || r.original_filename || id;
       const uploaded = r.uploaded_at || "";
       const activeClass = id === state.selectedContractId ? "active-row" : "";
+      const actions = [
+        `<a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>`,
+        isAdmin ? `<a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>` : null,
+        isAdmin ? `<button class="reprocess-btn" data-id="${id}">Reprocess</button>` : null,
+      ]
+        .filter(Boolean)
+        .join("&nbsp;|&nbsp;");
       return `
         <tr data-contract-id="${id}" class="${activeClass}">
           <td>${badge(r.status)}</td>
           <td><a href="#" data-id="${id}" class="open-contract">${title}</a></td>
           <td class="small">${r.vendor || ""}</td>
           <td class="small">${r.agreement_type || "Uncategorized"}</td>
+          <td class="small">${escapeHtml(formatProfitCentersSummary(r.profit_centers))}</td>
           <td class="small">${uploaded}</td>
           <td class="small">
-            <a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>
-            &nbsp;|&nbsp;
-            <a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>
-            &nbsp;|&nbsp;
-            <button class="reprocess-btn" data-id="${id}">Reprocess</button>
+            ${actions}
           </td>
         </tr>
       `;
@@ -1479,7 +1501,7 @@ function renderContractDetail(data) {
         .join("")
     : `<div class="muted small">No events. Add one manually below.</div>`;
 
-  const actionButtons = c.status === "processed" ? "" : `<button id="reprocessContract">Reprocess</button>`;
+  const actionButtons = isAdmin && c.status !== "processed" ? `<button id="reprocessContract">Reprocess</button>` : "";
 
   $("detail").innerHTML = `
     <div><b>${c.title || c.original_filename || c.id}</b></div>
@@ -2303,6 +2325,7 @@ async function exportAllContractsCsv() {
     { key: "title", label: "Title" },
     { key: "vendor", label: "Vendor" },
     { key: "agreement_type", label: "Agreement Type" },
+    { key: "profit_centers", label: "Profit Centers" },
     { key: "status", label: "Status" },
     { key: "uploaded_at", label: "Uploaded At" },
   ];
@@ -2311,6 +2334,7 @@ async function exportAllContractsCsv() {
     title: c.title || c.original_filename || "",
     vendor: c.vendor || "",
     agreement_type: c.agreement_type || "",
+    profit_centers: formatProfitCentersSummary(c.profit_centers || []),
     status: c.status || "",
     uploaded_at: c.uploaded_at || "",
   }));
