@@ -3246,8 +3246,6 @@ def logout(request: Request, response: Response):
 @app.get("/api/auth/me")
 def auth_me(request: Request):
     user = get_current_user(request)
-    if not user and AUTH_REQUIRED:
-        raise HTTPException(status_code=401, detail="Authentication required")
     return {
         "user": user,
         "auth_required": AUTH_REQUIRED,
