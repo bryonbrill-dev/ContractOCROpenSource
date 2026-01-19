@@ -370,7 +370,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(computed, digest)
 
 
-AUTH_REQUIRED = _env_bool("AUTH_REQUIRED", False)
+AUTH_REQUIRED = _env_bool("AUTH_REQUIRED", True)
 AUTH_COOKIE_NAME = os.environ.get("AUTH_COOKIE_NAME", "contractocr_session")
 AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", False)
 try:
@@ -506,6 +506,18 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             """
         )
 
+    if not has_table("profit_centers"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS profit_centers (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              code TEXT NOT NULL UNIQUE,
+              name TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            """
+        )
+
     _seed_agreement_types(conn)
 
     conn.execute(
@@ -572,13 +584,14 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
 
-        CREATE TABLE IF NOT EXISTS auth_oidc_states (
-          state TEXT PRIMARY KEY,
-          nonce TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          expires_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expires_at);
+CREATE TABLE IF NOT EXISTS auth_oidc_states (
+  state TEXT PRIMARY KEY,
+  nonce TEXT NOT NULL,
+  return_to TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expires_at);
         """
     )
 
@@ -671,6 +684,9 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id ON pending_agreements(contract_id)"
         )
+
+    if has_table("auth_oidc_states") and not has_column("auth_oidc_states", "return_to"):
+        conn.execute("ALTER TABLE auth_oidc_states ADD COLUMN return_to TEXT")
 
     if not has_table("pending_agreement_reminders"):
         conn.executescript(
@@ -780,6 +796,36 @@ class AgreementTypeKeywordCreate(BaseModel):
 
     @field_validator("keyword", mode="before")
     def normalize_keyword(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
+class ProfitCenterCreate(BaseModel):
+    code: str
+    name: str
+
+    @field_validator("code", mode="before")
+    def normalize_code(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
+class ProfitCenterUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+
+    @field_validator("code", mode="before")
+    def normalize_code(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value or "").strip()
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
         return str(value or "").strip()
 
 
@@ -1186,6 +1232,13 @@ CREATE TABLE IF NOT EXISTS agreement_type_keywords (
 CREATE INDEX IF NOT EXISTS idx_agreement_type_keywords_type ON agreement_type_keywords(agreement_type_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_agreement_type_keywords_type_keyword ON agreement_type_keywords(agreement_type_id, keyword);
 
+CREATE TABLE IF NOT EXISTS profit_centers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ocr_pages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
@@ -1298,13 +1351,14 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
 
-CREATE TABLE IF NOT EXISTS auth_oidc_states (
-  state TEXT PRIMARY KEY,
-  nonce TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expires_at);
+        CREATE TABLE IF NOT EXISTS auth_oidc_states (
+          state TEXT PRIMARY KEY,
+          nonce TEXT NOT NULL,
+          return_to TEXT,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expires_at);
 
 CREATE TABLE IF NOT EXISTS notification_logs (
   id TEXT PRIMARY KEY,
@@ -1410,7 +1464,7 @@ def _load_user_roles(conn: sqlite3.Connection, user_id: int) -> List[str]:
 
 
 def _get_session_token(request: Request) -> Optional[str]:
-    token = request.cookies.get("session_token")
+    token = request.cookies.get(AUTH_COOKIE_NAME)
     if not token:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.lower().startswith("bearer "):
@@ -1805,27 +1859,43 @@ def _oidc_jwks() -> Dict[str, Any]:
     return jwks
 
 
-def _oidc_state_store(conn: sqlite3.Connection, state: str, nonce: str) -> None:
+def _normalize_return_to(return_to: Optional[str]) -> Optional[str]:
+    if not return_to:
+        return None
+    cleaned = str(return_to).strip()
+    if not cleaned:
+        return None
+    parsed = urllib.parse.urlparse(cleaned)
+    if parsed.scheme in {"http", "https"}:
+        return cleaned
+    if cleaned.startswith("/"):
+        return cleaned
+    return None
+
+
+def _oidc_state_store(
+    conn: sqlite3.Connection, state: str, nonce: str, return_to: Optional[str]
+) -> None:
     created_at = now_iso()
     expires_at = (datetime.utcnow() + timedelta(minutes=OIDC_STATE_TTL_MINUTES)).replace(
         microsecond=0
     ).isoformat() + "Z"
     conn.execute(
         """
-        INSERT INTO auth_oidc_states (state, nonce, created_at, expires_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO auth_oidc_states (state, nonce, return_to, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (state, nonce, created_at, expires_at),
+        (state, nonce, return_to, created_at, expires_at),
     )
 
 
-def _oidc_state_pop(conn: sqlite3.Connection, state: str) -> Optional[str]:
+def _oidc_state_pop(conn: sqlite3.Connection, state: str) -> Optional[Dict[str, Optional[str]]]:
     conn.execute(
         "DELETE FROM auth_oidc_states WHERE expires_at <= ?",
         (now_iso(),),
     )
     row = conn.execute(
-        "SELECT nonce, expires_at FROM auth_oidc_states WHERE state = ?",
+        "SELECT nonce, return_to, expires_at FROM auth_oidc_states WHERE state = ?",
         (state,),
     ).fetchone()
     conn.execute("DELETE FROM auth_oidc_states WHERE state = ?", (state,))
@@ -1834,7 +1904,7 @@ def _oidc_state_pop(conn: sqlite3.Connection, state: str) -> Optional[str]:
     expires_at = _parse_iso_datetime(row["expires_at"])
     if expires_at and expires_at <= datetime.utcnow():
         return None
-    return row["nonce"]
+    return {"nonce": row["nonce"], "return_to": row["return_to"]}
 
 
 def _oidc_build_authorize_url(state: str, nonce: str) -> str:
@@ -2030,6 +2100,64 @@ def create_agreement_type_keyword(
             (payload.agreement_type_id, keyword, now_iso()),
         )
         return {"id": cur.lastrowid, "agreement_type_id": payload.agreement_type_id, "keyword": keyword}
+
+
+# ----------------------------
+# Profit centers
+# ----------------------------
+@app.get("/api/profit-centers")
+def list_profit_centers(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, code, name FROM profit_centers ORDER BY code"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/profit-centers")
+def create_profit_center(
+    payload: ProfitCenterCreate, _: Dict[str, Any] = Depends(require_admin)
+):
+    if not payload.code or not payload.name:
+        raise HTTPException(status_code=400, detail="Profit center code and name are required")
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO profit_centers (code, name, created_at) VALUES (?, ?, ?)",
+            (payload.code, payload.name, now_iso()),
+        )
+        return {"id": cur.lastrowid, "code": payload.code, "name": payload.name}
+
+
+@app.put("/api/profit-centers/{profit_center_id}")
+def update_profit_center(
+    profit_center_id: int,
+    payload: ProfitCenterUpdate,
+    _: Dict[str, Any] = Depends(require_admin),
+):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id, code, name FROM profit_centers WHERE id = ?", (profit_center_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Profit center not found")
+        code = payload.code if payload.code is not None else row["code"]
+        name = payload.name if payload.name is not None else row["name"]
+        if not code or not name:
+            raise HTTPException(status_code=400, detail="Profit center code and name are required")
+        conn.execute(
+            "UPDATE profit_centers SET code = ?, name = ? WHERE id = ?",
+            (code, name, profit_center_id),
+        )
+        return {"id": profit_center_id, "code": code, "name": name}
+
+
+@app.delete("/api/profit-centers/{profit_center_id}")
+def delete_profit_center(
+    profit_center_id: int, _: Dict[str, Any] = Depends(require_admin)
+):
+    with db() as conn:
+        conn.execute("DELETE FROM profit_centers WHERE id = ?", (profit_center_id,))
+        return {"deleted": profit_center_id}
 
 
 @app.delete("/api/agreement-type-keywords/{keyword_id}")
@@ -2384,13 +2512,14 @@ def auth_me(request: Request):
 
 
 @app.get("/api/auth/oidc/login")
-def oidc_login():
+def oidc_login(return_to: Optional[str] = None):
     if not OIDC_ENABLED:
         raise HTTPException(status_code=400, detail="OIDC is not configured")
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
+    normalized_return_to = _normalize_return_to(return_to)
     with db() as conn:
-        _oidc_state_store(conn, state, nonce)
+        _oidc_state_store(conn, state, nonce, normalized_return_to)
     url = _oidc_build_authorize_url(state, nonce)
     return RedirectResponse(url)
 
@@ -2400,9 +2529,11 @@ def oidc_callback(code: str, state: str):
     if not OIDC_ENABLED:
         raise HTTPException(status_code=400, detail="OIDC is not configured")
     with db() as conn:
-        nonce = _oidc_state_pop(conn, state)
-    if not nonce:
+        state_payload = _oidc_state_pop(conn, state)
+    if not state_payload:
         raise HTTPException(status_code=400, detail="OIDC state is invalid or expired")
+    nonce = state_payload["nonce"]
+    return_to = _normalize_return_to(state_payload.get("return_to"))
     token_data = _oidc_exchange_code(code)
     id_token = token_data.get("id_token")
     if not id_token:
@@ -2420,7 +2551,8 @@ def oidc_callback(code: str, state: str):
     with db() as conn:
         user_id = _oidc_get_or_create_user(conn, email, name)
         token = create_session(conn, user_id)
-    redirect_response = RedirectResponse(OIDC_POST_LOGIN_REDIRECT, status_code=303)
+    redirect_target = return_to or OIDC_POST_LOGIN_REDIRECT
+    redirect_response = RedirectResponse(redirect_target, status_code=303)
     redirect_response.set_cookie(
         AUTH_COOKIE_NAME,
         token,
@@ -2557,6 +2689,7 @@ def list_pending_agreements(
     limit: int = 20,
     offset: int = 0,
     query: str = "",
+    _: Dict[str, Any] = Depends(require_user),
 ):
     limit = max(1, min(limit, 100))
     offset = max(offset, 0)
@@ -2605,7 +2738,10 @@ def list_pending_agreements(
 
 
 @app.post("/api/pending-agreements")
-def create_pending_agreement(payload: PendingAgreementCreate):
+def create_pending_agreement(
+    payload: PendingAgreementCreate,
+    _: Dict[str, Any] = Depends(require_user),
+):
     title = payload.title.strip()
     owner = payload.owner.strip()
     if not title or not owner:
@@ -2657,7 +2793,11 @@ def create_pending_agreement(payload: PendingAgreementCreate):
 
 
 @app.put("/api/pending-agreements/{agreement_id}")
-def update_pending_agreement(agreement_id: str, payload: PendingAgreementUpdate):
+def update_pending_agreement(
+    agreement_id: str,
+    payload: PendingAgreementUpdate,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         row = conn.execute(
             """
@@ -2733,7 +2873,10 @@ def update_pending_agreement(agreement_id: str, payload: PendingAgreementUpdate)
 
 
 @app.delete("/api/pending-agreements/{agreement_id}")
-def delete_pending_agreement(agreement_id: str):
+def delete_pending_agreement(
+    agreement_id: str,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         row = conn.execute(
             "SELECT id FROM pending_agreements WHERE id = ?", (agreement_id,)
