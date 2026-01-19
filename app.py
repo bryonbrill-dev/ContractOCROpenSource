@@ -670,12 +670,6 @@ def _repair_profit_center_links(conn: sqlite3.Connection, table_name: str) -> No
     conn.execute("PRAGMA foreign_keys = OFF;")
     conn.execute(f"ALTER TABLE {table_name} RENAME TO {table_name}_old")
     if table_name == "contract_profit_centers":
-        conn.execute("DROP INDEX IF EXISTS idx_contract_profit_centers_contract")
-        conn.execute("DROP INDEX IF EXISTS idx_contract_profit_centers_center")
-    elif table_name == "user_profit_centers":
-        conn.execute("DROP INDEX IF EXISTS idx_user_profit_centers_user")
-        conn.execute("DROP INDEX IF EXISTS idx_user_profit_centers_center")
-    if table_name == "contract_profit_centers":
         conn.executescript(
             """
             CREATE TABLE contract_profit_centers (
