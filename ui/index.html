@@ -194,6 +194,15 @@
     body.theme-dark #authOverlay .text-slate-600 { color: #94a3b8; }
     body.theme-dark #authOverlay .text-slate-400 { color: #cbd5f5; }
     body.theme-dark #authOverlay .border-slate-200 { border-color: #1f2937; }
+    .multi-select { width: 100%; min-height: 180px; max-height: 240px; }
+    .multi-select option { padding: 4px; }
+    .toast-container { position: fixed; left: 20px; bottom: 20px; z-index: 3000; display: flex; flex-direction: column; gap: 10px; }
+    .toast { background: #0f172a; color: #f8fafc; border-radius: 10px; padding: 12px 14px; min-width: 240px; max-width: 360px; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .toast.success { background: #166534; }
+    .toast.error { background: #b91c1c; }
+    .toast.warning { background: #b45309; }
+    .toast .toast-close { background: transparent; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 0; }
+    .toast-hide { opacity: 0; transform: translateY(8px); transition: opacity 0.2s ease, transform 0.2s ease; }
   </style>
 </head>
 <body>
@@ -882,9 +891,9 @@
         <div class="small muted" style="margin-top:8px;">Assign roles</div>
         <div id="adminUserRoles" class="row wrap" style="margin-top:6px;"></div>
         <div class="small muted" style="margin-top:12px;">Assign profit centers</div>
-        <div id="adminUserProfitCenters" class="row wrap" style="margin-top:6px;"></div>
+        <select id="adminUserProfitCenters" class="multi-select" multiple size="8" style="margin-top:6px;"></select>
         <div class="small muted" style="margin-top:12px;">Assign profit center groups</div>
-        <div id="adminUserProfitCenterGroups" class="row wrap" style="margin-top:6px;"></div>
+        <select id="adminUserProfitCenterGroups" class="multi-select" multiple size="6" style="margin-top:6px;"></select>
         <div class="row wrap" style="margin-top:8px;">
           <button id="adminUserSave">Add user</button>
           <button id="adminUserCancel" class="link-button" type="button">Cancel</button>
@@ -1321,5 +1330,6 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <div id="toastContainer" class="toast-container"></div>
 </body>
 </html>

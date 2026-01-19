@@ -134,6 +134,29 @@ function showAlert(message, options = {}) {
   });
 }
 
+function showToast(message, { variant = "success", timeout = 30000 } = {}) {
+  const container = $("toastContainer");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = `toast ${variant}`;
+  toast.innerHTML = `
+    <span>${escapeHtml(message)}</span>
+    <button class="toast-close" aria-label="Dismiss notification">×</button>
+  `;
+  container.appendChild(toast);
+
+  const removeToast = () => {
+    toast.classList.add("toast-hide");
+    window.setTimeout(() => toast.remove(), 220);
+  };
+
+  const timer = window.setTimeout(removeToast, timeout);
+  toast.querySelector(".toast-close")?.addEventListener("click", () => {
+    window.clearTimeout(timer);
+    removeToast();
+  });
+}
+
 function initModal() {
   const { overlay, confirm, cancel, close } = getModalElements();
   if (!overlay || !confirm || !cancel || !close) return;
@@ -1638,7 +1661,9 @@ function renderContractDetail(data) {
         body: JSON.stringify({ profit_center_ids: profitCenterIds }),
       });
       await loadDetail(c.id);
+      showToast("Contract profit centers updated.", { variant: "success" });
     } catch (e) {
+      showToast(e.message || "Unable to update profit centers.", { variant: "error" });
       await showAlert(e.message, { title: "Update failed" });
     }
   });
@@ -2326,6 +2351,45 @@ function getCheckedValues(containerId) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
 }
 
+function renderMultiSelectOptions(selectId, items, selectedValues = []) {
+  const select = $(selectId);
+  if (!select) return;
+  if (!items.length) {
+    select.innerHTML = `<option disabled>No options available.</option>`;
+    select.disabled = true;
+    return;
+  }
+  const selectedSet = new Set(selectedValues.map((value) => String(value)));
+  select.innerHTML = items
+    .map((item) => {
+      let value = "";
+      let label = "";
+      if (typeof item === "string") {
+        value = item;
+        label = item;
+      } else if (item && typeof item === "object") {
+        if ("email" in item) {
+          value = item.email;
+          label = formatUserLabel(item);
+        } else {
+          value = String(item.id ?? "");
+          label = item.name ?? value;
+        }
+      }
+      return `<option value="${escapeHtml(value)}"${selectedSet.has(String(value)) ? " selected" : ""}>${escapeHtml(
+        label,
+      )}</option>`;
+    })
+    .join("");
+  select.disabled = false;
+}
+
+function getSelectedValues(selectId) {
+  const select = $(selectId);
+  if (!select) return [];
+  return Array.from(select.selectedOptions).map((option) => option.value);
+}
+
 function getProfitCenterOptions() {
   return (state.profitCenters || []).map((center) => ({
     id: center.id,
@@ -2405,8 +2469,8 @@ function resetAdminUserForm() {
   if (isActive) isActive.checked = true;
   if (isAdmin) isAdmin.checked = false;
   renderCheckboxList("adminUserRoles", state.roles, []);
-  renderCheckboxList("adminUserProfitCenters", getProfitCenterOptions(), []);
-  renderCheckboxList("adminUserProfitCenterGroups", getProfitCenterGroups(), []);
+  renderMultiSelectOptions("adminUserProfitCenters", getProfitCenterOptions(), []);
+  renderMultiSelectOptions("adminUserProfitCenterGroups", getProfitCenterGroups(), []);
   $("adminUserSave")?.setAttribute("data-mode", "create");
   const adminUserSave = $("adminUserSave");
   if (adminUserSave) adminUserSave.textContent = "Add user";
@@ -2427,8 +2491,8 @@ function openAdminUserEdit(user) {
   if (isActive) isActive.checked = Boolean(user.is_active);
   if (isAdmin) isAdmin.checked = Boolean(user.is_admin);
   renderCheckboxList("adminUserRoles", state.roles, user.role_ids || []);
-  renderCheckboxList("adminUserProfitCenters", getProfitCenterOptions(), user.profit_center_ids || []);
-  renderCheckboxList(
+  renderMultiSelectOptions("adminUserProfitCenters", getProfitCenterOptions(), user.profit_center_ids || []);
+  renderMultiSelectOptions(
     "adminUserProfitCenterGroups",
     getProfitCenterGroups(),
     user.profit_center_groups || [],
@@ -2798,12 +2862,13 @@ function initAdminUi() {
     const isActive = $("adminUserActive")?.checked ?? true;
     const isAdmin = $("adminUserAdmin")?.checked ?? false;
     const roles = getCheckedValues("adminUserRoles").map((value) => Number(value));
-    const profitCenterIds = getCheckedValues("adminUserProfitCenters").map((value) => Number(value));
-    const profitCenterGroups = getCheckedValues("adminUserProfitCenterGroups");
+    const profitCenterIds = getSelectedValues("adminUserProfitCenters").map((value) => Number(value));
+    const profitCenterGroups = getSelectedValues("adminUserProfitCenterGroups");
     const status = $("adminUserStatus");
 
     if (!name || !email || (!state.adminUserEditId && !password)) {
       if (status) status.textContent = "Name, email, and password are required for new users.";
+      showToast("Please fill in name, email, and password for new users.", { variant: "warning" });
       return;
     }
     try {
@@ -2832,8 +2897,11 @@ function initAdminUi() {
       }
       await loadAdminData();
       if (status) status.textContent = "User saved.";
+      showToast("User saved.", { variant: "success" });
     } catch (err) {
-      if (status) status.textContent = err.message || "Unable to save user.";
+      const message = err.message || "Unable to save user.";
+      if (status) status.textContent = message;
+      showToast(message, { variant: "error" });
     }
   });
 
@@ -2843,6 +2911,7 @@ function initAdminUi() {
     const status = $("adminRoleStatus");
     if (!name) {
       if (status) status.textContent = "Role name is required.";
+      showToast("Role name is required.", { variant: "warning" });
       return;
     }
     try {
@@ -2853,8 +2922,11 @@ function initAdminUi() {
       }
       await loadAdminData();
       if (status) status.textContent = "Role saved.";
+      showToast("Role saved.", { variant: "success" });
     } catch (err) {
-      if (status) status.textContent = err.message || "Unable to save role.";
+      const message = err.message || "Unable to save role.";
+      if (status) status.textContent = message;
+      showToast(message, { variant: "error" });
     }
   });
 
@@ -2865,6 +2937,7 @@ function initAdminUi() {
     const status = $("adminProfitCenterStatus");
     if (!code || !name) {
       if (status) status.textContent = "Profit center code and name are required.";
+      showToast("Profit center code and name are required.", { variant: "warning" });
       return;
     }
     try {
@@ -2879,8 +2952,11 @@ function initAdminUi() {
       }
       await loadAdminData();
       if (status) status.textContent = "Profit center saved.";
+      showToast("Profit center saved.", { variant: "success" });
     } catch (err) {
-      if (status) status.textContent = err.message || "Unable to save profit center.";
+      const message = err.message || "Unable to save profit center.";
+      if (status) status.textContent = message;
+      showToast(message, { variant: "error" });
     }
   });
 
@@ -2889,6 +2965,7 @@ function initAdminUi() {
     const status = $("adminAgreementTypeStatus");
     if (!name) {
       if (status) status.textContent = "Agreement type name is required.";
+      showToast("Agreement type name is required.", { variant: "warning" });
       return;
     }
     try {
@@ -2897,8 +2974,11 @@ function initAdminUi() {
       if (input) input.value = "";
       await loadAgreementTypeCatalog();
       if (status) status.textContent = "Agreement type added.";
+      showToast("Agreement type added.", { variant: "success" });
     } catch (err) {
-      if (status) status.textContent = err.message || "Unable to add agreement type.";
+      const message = err.message || "Unable to add agreement type.";
+      if (status) status.textContent = message;
+      showToast(message, { variant: "error" });
     }
   });
 }

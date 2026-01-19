@@ -232,6 +232,16 @@ def safe_json_list(value: Optional[str]) -> List[str]:
     return []
 
 
+def safe_json_dict(value: Optional[str]) -> Dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def safe_json_int_list(value: Optional[str]) -> List[int]:
     if not value:
         return []
@@ -641,8 +651,70 @@ def _seed_profit_centers(conn: sqlite3.Connection) -> None:
             [
                 (item["code"], item["name"], item["group"], now_iso())
                 for item in DEFAULT_PROFIT_CENTERS
-            ],
+        ],
+    )
+
+
+def _foreign_key_targets(conn: sqlite3.Connection, table_name: str) -> List[str]:
+    try:
+        rows = conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [row["table"] for row in rows]
+
+
+def _repair_profit_center_links(conn: sqlite3.Connection, table_name: str) -> None:
+    if "profit_centers_old" not in _foreign_key_targets(conn, table_name):
+        return
+    logger.warning("Rebuilding %s to repair profit center foreign keys.", table_name)
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    conn.execute(f"ALTER TABLE {table_name} RENAME TO {table_name}_old")
+    if table_name == "contract_profit_centers":
+        conn.executescript(
+            """
+            CREATE TABLE contract_profit_centers (
+              contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+              profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (contract_id, profit_center_id)
+            );
+            CREATE INDEX idx_contract_profit_centers_contract
+              ON contract_profit_centers(contract_id);
+            CREATE INDEX idx_contract_profit_centers_center
+              ON contract_profit_centers(profit_center_id);
+            """
         )
+        conn.execute(
+            """
+            INSERT INTO contract_profit_centers (contract_id, profit_center_id, created_at)
+            SELECT contract_id, profit_center_id, created_at
+            FROM contract_profit_centers_old
+            """
+        )
+    elif table_name == "user_profit_centers":
+        conn.executescript(
+            """
+            CREATE TABLE user_profit_centers (
+              user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+              profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (user_id, profit_center_id)
+            );
+            CREATE INDEX idx_user_profit_centers_user
+              ON user_profit_centers(user_id);
+            CREATE INDEX idx_user_profit_centers_center
+              ON user_profit_centers(profit_center_id);
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO user_profit_centers (user_id, profit_center_id, created_at)
+            SELECT user_id, profit_center_id, created_at
+            FROM user_profit_centers_old
+            """
+        )
+    conn.execute(f"DROP TABLE {table_name}_old")
+    conn.execute("PRAGMA foreign_keys = ON;")
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:
@@ -790,8 +862,45 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
           ON user_profit_center_groups(user_id);
         CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_name
           ON user_profit_center_groups(group_name);
+
+        CREATE TABLE IF NOT EXISTS contract_notes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+          note TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_contract_notes_contract
+          ON contract_notes(contract_id);
+
+        CREATE TABLE IF NOT EXISTS agreement_notes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+          note TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agreement_notes_agreement
+          ON agreement_notes(pending_agreement_id);
+
+        CREATE TABLE IF NOT EXISTS action_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+          action TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_action_logs_entity
+          ON action_logs(entity_type, entity_id);
+        CREATE INDEX IF NOT EXISTS idx_action_logs_user
+          ON action_logs(user_id);
         """
     )
+
+    _repair_profit_center_links(conn, "contract_profit_centers")
+    _repair_profit_center_links(conn, "user_profit_centers")
 
     _seed_agreement_types(conn)
     _seed_profit_centers(conn)
@@ -1274,6 +1383,22 @@ class AdminUserUpdate(BaseModel):
             cleaned = [str(v).strip() for v in value if str(v).strip()]
             return cleaned
         return []
+
+
+class NoteCreate(BaseModel):
+    note: str
+
+    @field_validator("note", mode="before")
+    def normalize_note(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
+class ActionLogQuery(BaseModel):
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    user_id: Optional[int] = None
+    limit: int = 100
+    offset: int = 0
 
 
 class RoleCreate(BaseModel):
@@ -2271,6 +2396,30 @@ def _normalize_return_to(return_to: Optional[str]) -> Optional[str]:
     return None
 
 
+def _log_action(
+    conn: sqlite3.Connection,
+    user: Optional[Dict[str, Any]],
+    action: str,
+    entity_type: str,
+    entity_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO action_logs (user_id, action, entity_type, entity_id, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user["id"] if user else None,
+            action,
+            entity_type,
+            entity_id,
+            json.dumps(metadata or {}),
+            now_iso(),
+        ),
+    )
+
+
 def _oidc_state_store(
     conn: sqlite3.Connection, state: str, nonce: str, return_to: Optional[str]
 ) -> None:
@@ -2886,6 +3035,50 @@ def update_tag_permissions(
         return {"tag_id": tag_id, "role_ids": role_ids}
 
 
+@app.get("/api/action-logs")
+def list_action_logs(
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    user_id: Optional[int] = None,
+    limit: int = 100,
+    offset: int = 0,
+    _: Dict[str, Any] = Depends(require_admin),
+):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    where_parts = []
+    params: List[Any] = []
+    if entity_type:
+        where_parts.append("entity_type = ?")
+        params.append(entity_type)
+    if entity_id:
+        where_parts.append("entity_id = ?")
+        params.append(entity_id)
+    if user_id is not None:
+        where_parts.append("user_id = ?")
+        params.append(user_id)
+    where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+    with db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT a.id, a.user_id, a.action, a.entity_type, a.entity_id, a.metadata_json, a.created_at,
+                   u.name AS user_name, u.email AS user_email
+            FROM action_logs a
+            LEFT JOIN auth_users u ON u.id = a.user_id
+            {where_clause}
+            ORDER BY a.created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = safe_json_dict(item.pop("metadata_json", None))
+            items.append(item)
+        return {"items": items, "limit": limit, "offset": offset}
+
+
 # ----------------------------
 # Auth endpoints
 # ----------------------------
@@ -3168,7 +3361,7 @@ def list_pending_agreements(
 @app.post("/api/pending-agreements")
 def create_pending_agreement(
     payload: PendingAgreementCreate,
-    _: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(require_user),
 ):
     title = payload.title.strip()
     owner = payload.owner.strip()
@@ -3208,6 +3401,14 @@ def create_pending_agreement(
                 created_at,
             ),
         )
+        _log_action(
+            conn,
+            user,
+            "pending_agreement_created",
+            "pending_agreement",
+            agreement_id,
+            {"contract_id": contract_id},
+        )
     return {
         "id": agreement_id,
         "title": title,
@@ -3224,7 +3425,7 @@ def create_pending_agreement(
 def update_pending_agreement(
     agreement_id: str,
     payload: PendingAgreementUpdate,
-    _: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(require_user),
 ):
     with db() as conn:
         row = conn.execute(
@@ -3279,6 +3480,14 @@ def update_pending_agreement(
             """,
             (title, owner, owner_email, contract_id, due_date, status, agreement_id),
         )
+        _log_action(
+            conn,
+            user,
+            "pending_agreement_updated",
+            "pending_agreement",
+            agreement_id,
+            {"contract_id": contract_id, "status": status},
+        )
         contract = None
         if contract_id:
             contract = conn.execute(
@@ -3298,6 +3507,76 @@ def update_pending_agreement(
         "contract_vendor": contract["vendor"] if contract else None,
         "created_at": row["created_at"],
     }
+
+
+@app.get("/api/pending-agreements/{agreement_id}/notes")
+def list_pending_agreement_notes(
+    agreement_id: str,
+    _: Dict[str, Any] = Depends(require_user),
+):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM pending_agreements WHERE id = ?",
+            (agreement_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+        rows = conn.execute(
+            """
+            SELECT n.id, n.pending_agreement_id, n.note, n.created_at, n.user_id,
+                   u.name AS user_name, u.email AS user_email
+            FROM agreement_notes n
+            LEFT JOIN auth_users u ON u.id = n.user_id
+            WHERE n.pending_agreement_id = ?
+            ORDER BY n.created_at DESC
+            """,
+            (agreement_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/pending-agreements/{agreement_id}/notes")
+def create_pending_agreement_note(
+    agreement_id: str,
+    payload: NoteCreate,
+    user: Dict[str, Any] = Depends(require_user),
+):
+    note = payload.note.strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="note is required")
+    created_at = now_iso()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM pending_agreements WHERE id = ?",
+            (agreement_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+        cur = conn.execute(
+            """
+            INSERT INTO agreement_notes (pending_agreement_id, user_id, note, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (agreement_id, user["id"], note, created_at),
+        )
+        note_id = cur.lastrowid
+        _log_action(
+            conn,
+            user,
+            "pending_agreement_note_added",
+            "pending_agreement",
+            agreement_id,
+            {"note_id": note_id},
+        )
+        return {
+            "id": note_id,
+            "pending_agreement_id": agreement_id,
+            "note": note,
+            "created_at": created_at,
+            "user_id": user["id"],
+            "user_name": user.get("name"),
+            "user_email": user.get("email"),
+        }
 
 
 @app.delete("/api/pending-agreements/{agreement_id}")
@@ -4196,7 +4475,7 @@ def update_contract(
 def update_contract_profit_centers(
     contract_id: str,
     payload: ContractProfitCenterUpdate,
-    _: Dict[str, Any] = Depends(require_admin),
+    user: Dict[str, Any] = Depends(require_admin),
 ):
     with db() as conn:
         row = conn.execute(
@@ -4207,7 +4486,91 @@ def update_contract_profit_centers(
             raise HTTPException(status_code=404, detail="Contract not found")
         profit_center_ids = _validate_profit_center_ids(conn, payload.profit_center_ids)
         _set_contract_profit_centers(conn, contract_id, profit_center_ids)
+        _log_action(
+            conn,
+            user,
+            "contract_profit_centers_updated",
+            "contract",
+            contract_id,
+            {"profit_center_ids": profit_center_ids},
+        )
         return {"contract_id": contract_id, "profit_center_ids": profit_center_ids}
+
+
+@app.get("/api/contracts/{contract_id}/notes")
+def list_contract_notes(
+    contract_id: str,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_user),
+):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
+        rows = conn.execute(
+            """
+            SELECT n.id, n.contract_id, n.note, n.created_at, n.user_id,
+                   u.name AS user_name, u.email AS user_email
+            FROM contract_notes n
+            LEFT JOIN auth_users u ON u.id = n.user_id
+            WHERE n.contract_id = ?
+            ORDER BY n.created_at DESC
+            """,
+            (contract_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/contracts/{contract_id}/notes")
+def create_contract_note(
+    contract_id: str,
+    payload: NoteCreate,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_user),
+):
+    note = payload.note.strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="note is required")
+    created_at = now_iso()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
+        cur = conn.execute(
+            """
+            INSERT INTO contract_notes (contract_id, user_id, note, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (contract_id, user["id"], note, created_at),
+        )
+        note_id = cur.lastrowid
+        _log_action(
+            conn,
+            user,
+            "contract_note_added",
+            "contract",
+            contract_id,
+            {"note_id": note_id},
+        )
+        return {
+            "id": note_id,
+            "contract_id": contract_id,
+            "note": note,
+            "created_at": created_at,
+            "user_id": user["id"],
+            "user_name": user.get("name"),
+            "user_email": user.get("email"),
+        }
 
 
 @app.delete("/api/contracts/{contract_id}")
@@ -5332,7 +5695,11 @@ def nudge_pending_agreement(agreement_id: str):
 
 
 @app.post("/api/pending-agreements/{agreement_id}/action")
-def action_pending_agreement(agreement_id: str, payload: PendingAgreementAction):
+def action_pending_agreement(
+    agreement_id: str,
+    payload: PendingAgreementAction,
+    request: Request,
+):
     action = payload.action
     if action not in {"approve", "deny"}:
         raise HTTPException(status_code=400, detail="Action must be approve or deny")
@@ -5355,6 +5722,15 @@ def action_pending_agreement(agreement_id: str, payload: PendingAgreementAction)
         conn.execute(
             "UPDATE pending_agreements SET status = ? WHERE id = ?",
             (action_label, agreement_id),
+        )
+        user = get_current_user(request)
+        _log_action(
+            conn,
+            user,
+            f"pending_agreement_{action}",
+            "pending_agreement",
+            agreement_id,
+            {"status": action_label, "contract_id": agreement["contract_id"]},
         )
         recipient = _resolve_pending_agreement_recipient(conn, agreement)
         if not recipient:
