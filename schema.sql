@@ -253,6 +253,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_notification_users_email_lower
 CREATE INDEX IF NOT EXISTS idx_notification_users_name ON notification_users(name);
 
 -- =========================
+-- App settings
+-- =========================
+CREATE TABLE IF NOT EXISTS app_settings (
+  key          TEXT PRIMARY KEY,
+  value        TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+-- =========================
 -- Authentication + roles
 -- =========================
 CREATE TABLE IF NOT EXISTS auth_users (

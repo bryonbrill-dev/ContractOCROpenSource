@@ -931,6 +931,35 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             [(u["name"], u["email"], now_iso()) for u in DEFAULT_NOTIFICATION_USERS],
         )
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+        """
+    )
+    existing_setting = conn.execute(
+        "SELECT key FROM app_settings WHERE key = ?",
+        (NEW_USER_NOTIFICATION_EMAIL_SETTING_KEY,),
+    ).fetchone()
+    if not existing_setting:
+        now = now_iso()
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                NEW_USER_NOTIFICATION_EMAIL_SETTING_KEY,
+                DEFAULT_NEW_USER_NOTIFICATION_EMAIL,
+                now,
+                now,
+            ),
+        )
+
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS auth_users (
@@ -1111,6 +1140,69 @@ CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expi
             """
         )
 
+
+def _get_app_setting(
+    conn: sqlite3.Connection, key: str, default: Optional[str] = None
+) -> Optional[str]:
+    row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    if row and row["value"] is not None:
+        return str(row["value"])
+    return default
+
+
+def _upsert_app_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    now = now_iso()
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (key, value, now, now),
+    )
+
+
+def _get_new_user_notification_email(conn: sqlite3.Connection) -> str:
+    email = _get_app_setting(
+        conn, NEW_USER_NOTIFICATION_EMAIL_SETTING_KEY, DEFAULT_NEW_USER_NOTIFICATION_EMAIL
+    )
+    return str(email or DEFAULT_NEW_USER_NOTIFICATION_EMAIL).strip().lower()
+
+
+def _format_new_user_notification_body(
+    name: str, email: str, created_at: str, user_id: int
+) -> str:
+    lines = [
+        "A new user has been created via Microsoft sign-in.",
+        "",
+        f"Name: {name or 'N/A'}",
+        f"Email: {email}",
+        f"User ID: {user_id}",
+        f"Created at: {created_at}",
+    ]
+    app_link = _format_app_link("Open ContractOCR")
+    if app_link:
+        lines.extend(["", app_link])
+    return "\n".join(lines)
+
+
+def _send_new_user_notification(
+    conn: sqlite3.Connection, user_id: int, name: str, email: str, created_at: str
+) -> None:
+    recipient = _get_new_user_notification_email(conn)
+    if not recipient:
+        return
+    subject = "New user created - Permissions required"
+    body = _format_new_user_notification_body(name, email, created_at, user_id)
+    _send_email_with_log(
+        [recipient],
+        subject,
+        body,
+        kind="new_user_signup",
+        related_id=str(user_id),
+        metadata={"email": email, "name": name, "created_at": created_at},
+    )
+
 # ----------------------------
 # Models
 # ----------------------------
@@ -1247,6 +1339,14 @@ class NotificationUser(BaseModel):
     id: int
     name: str
     email: str
+
+
+class NewUserNotificationEmailUpdate(BaseModel):
+    email: str
+
+    @field_validator("email", mode="before")
+    def normalize_email(cls, value: str) -> str:
+        return str(value or "").strip().lower()
 
 
 class AuthLogin(BaseModel):
@@ -2099,6 +2199,8 @@ DEFAULT_NOTIFICATION_USERS = [
     {"name": "Priya Patel", "email": "priya.patel@contractsuite.com"},
     {"name": "Morgan Rivera", "email": "morgan.rivera@contractsuite.com"},
 ]
+NEW_USER_NOTIFICATION_EMAIL_SETTING_KEY = "new_user_notification_email"
+DEFAULT_NEW_USER_NOTIFICATION_EMAIL = "placeholder@gmail.com"
 
 # ----------------------------
 # Tag + agreement helpers
@@ -2525,7 +2627,9 @@ def _oidc_default_role_ids(conn: sqlite3.Connection) -> List[int]:
     return role_ids
 
 
-def _oidc_get_or_create_user(conn: sqlite3.Connection, email: str, name: str) -> int:
+def _oidc_get_or_create_user(
+    conn: sqlite3.Connection, email: str, name: str
+) -> tuple[int, bool, Optional[str]]:
     is_admin_column = _table_has_column(conn, "auth_users", "is_admin")
     if is_admin_column:
         row = conn.execute(
@@ -2553,7 +2657,7 @@ def _oidc_get_or_create_user(conn: sqlite3.Connection, email: str, name: str) ->
         has_admin_role = admin_role and admin_role["id"] in role_ids
         if not row_is_admin and not has_admin_role and not role_ids:
             _set_user_roles(conn, row["id"], _oidc_default_role_ids(conn))
-        return row["id"]
+        return row["id"], False, None
     password_hash = hash_password(secrets.token_urlsafe(24))
     is_active_column = _table_has_column(conn, "auth_users", "is_active")
     columns = ["name", "email", "password_hash"]
@@ -2573,7 +2677,7 @@ def _oidc_get_or_create_user(conn: sqlite3.Connection, email: str, name: str) ->
     )
     user_id = cur.lastrowid
     _set_user_roles(conn, user_id, _oidc_default_role_ids(conn))
-    return user_id
+    return user_id, True, now
 
 # ----------------------------
 # Agreement types / Tags endpoints
@@ -2995,6 +3099,25 @@ def update_admin_user(
         return {"id": user_id}
 
 
+# Admin app settings
+@app.get("/api/admin/new-user-notification-email")
+def get_new_user_notification_email(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        return {"email": _get_new_user_notification_email(conn)}
+
+
+@app.put("/api/admin/new-user-notification-email")
+def update_new_user_notification_email(
+    payload: NewUserNotificationEmailUpdate, _: Dict[str, Any] = Depends(require_admin)
+):
+    email = payload.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email is required")
+    with db() as conn:
+        _upsert_app_setting(conn, NEW_USER_NOTIFICATION_EMAIL_SETTING_KEY, email)
+    return {"email": email}
+
+
 # ----------------------------
 # Tag permission endpoints
 # ----------------------------
@@ -3170,7 +3293,14 @@ def oidc_callback(code: str, state: str):
         raise HTTPException(status_code=400, detail="OIDC token missing email claim")
     name = (claims.get("name") or email).strip()
     with db() as conn:
-        user_id = _oidc_get_or_create_user(conn, email, name)
+        user_id, created, created_at = _oidc_get_or_create_user(conn, email, name)
+        if created:
+            try:
+                _send_new_user_notification(
+                    conn, user_id, name, email, created_at or now_iso()
+                )
+            except Exception as exc:
+                logger.warning("New user notification failed: %s", exc)
         token = create_session(conn, user_id)
     redirect_target = return_to or OIDC_POST_LOGIN_REDIRECT
     redirect_response = RedirectResponse(redirect_target, status_code=303)
