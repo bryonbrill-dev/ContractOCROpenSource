@@ -123,6 +123,36 @@ CREATE TABLE IF NOT EXISTS user_profit_center_groups (
 CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_user ON user_profit_center_groups(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_name ON user_profit_center_groups(group_name);
 
+CREATE TABLE IF NOT EXISTS contract_notes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id   TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  user_id       INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+  note          TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contract_notes_contract ON contract_notes(contract_id);
+
+CREATE TABLE IF NOT EXISTS agreement_notes (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+  user_id              INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+  note                 TEXT NOT NULL,
+  created_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agreement_notes_agreement ON agreement_notes(pending_agreement_id);
+
+CREATE TABLE IF NOT EXISTS action_logs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+  action        TEXT NOT NULL,
+  entity_type   TEXT NOT NULL,
+  entity_id     TEXT,
+  metadata_json TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_action_logs_entity ON action_logs(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_action_logs_user ON action_logs(user_id);
+
 -- =========================
 -- OCR text (per page)
 -- =========================
