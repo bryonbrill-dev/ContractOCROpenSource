@@ -270,6 +270,9 @@ async function ensureAuth() {
     state.oidcEnabled = Boolean(data.oidc_enabled);
     state.authReady = true;
     renderAuthStatus();
+    if (!data.user && data.auth_required) {
+      showAuthOverlay();
+    }
     return Boolean(data.user) || !data.auth_required;
   } catch (err) {
     state.authReady = true;
