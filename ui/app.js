@@ -1243,7 +1243,7 @@ async function loadAllContracts(reset = true) {
   }
   if (state.allContractsQuery) {
     params.set("q", state.allContractsQuery);
-    params.set("mode", "quick");
+    params.set("mode", "fulltext");
   }
 
   try {
@@ -2009,7 +2009,6 @@ async function loadDetail(id) {
   detail.innerHTML = "Loading…";
   state.selectedContractId = id;
   updateSelectedRows();
-  setPreviewFullscreen(true);
   try {
     if (!state.definitions.length || !state.tags.length || !state.agreementTypes.length) {
       await loadReferenceData();
