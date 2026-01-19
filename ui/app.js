@@ -208,6 +208,15 @@ function renderAuthStatus() {
   }
 }
 
+function getCurrentUser() {
+  return state.currentUser?.user || state.currentUser;
+}
+
+function isAdminUser() {
+  const currentUser = getCurrentUser();
+  return !state.authRequired || (currentUser && currentUser.roles?.includes("admin"));
+}
+
 async function loginUser(email, password) {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
@@ -771,6 +780,15 @@ async function fetchProfitCenters() {
   return res.json();
 }
 
+async function ensureProfitCentersLoaded() {
+  if (state.profitCenters.length) return;
+  try {
+    state.profitCenters = await fetchProfitCenters();
+  } catch {
+    state.profitCenters = [];
+  }
+}
+
 async function createProfitCenter(payload) {
   const res = await apiFetch("/api/profit-centers", {
     method: "POST",
@@ -1267,6 +1285,20 @@ function renderContractDetail(data) {
   const tags = data.tags || [];
   const reminders = data.reminders || {};
   const agreementType = c.agreement_type || "Uncategorized";
+  const assignedProfitCenters = Array.isArray(c.profit_centers) ? c.profit_centers : [];
+  const assignedProfitCenterIds = new Set(
+    (c.profit_center_ids || assignedProfitCenters.map((center) => center.id)).map((id) => String(id)),
+  );
+  const availableProfitCenters = state.profitCenters.length ? state.profitCenters : assignedProfitCenters;
+  const profitCenterPills = assignedProfitCenters.length
+    ? assignedProfitCenters
+        .map((center) => {
+          const groupLabel = center.group_name ? ` · ${center.group_name}` : "";
+          return `<span class="pill">${escapeHtml(`${center.code} — ${center.name}${groupLabel}`)}</span>`;
+        })
+        .join(" ")
+    : `<span class="muted small">No profit centers assigned.</span>`;
+  const isAdmin = isAdminUser();
   const termLookup = new Map(terms.map((t) => [t.term_key, t]));
   const eventLookup = new Map(events.filter((e) => e.derived_from_term_key).map((e) => [e.derived_from_term_key, e]));
   const vendorTerm = termLookup.get("vendor");
@@ -1298,6 +1330,41 @@ function renderContractDetail(data) {
         )
         .join("")
     : `<div class="muted small">No tags yet.</div>`;
+
+  const profitCenterOptionsHtml = availableProfitCenters.length
+    ? Object.entries(
+        availableProfitCenters.reduce((grouped, center) => {
+          const group = center.group_name || "Ungrouped";
+          if (!grouped[group]) grouped[group] = [];
+          grouped[group].push(center);
+          return grouped;
+        }, {}),
+      )
+        .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
+        .map(([groupName, centers]) => {
+          const centerOptions = centers
+            .map((center) => {
+              const label = `${center.code} — ${center.name}`;
+              const checked = assignedProfitCenterIds.has(String(center.id)) ? "checked" : "";
+              return `
+                <label class="inline small" style="gap:6px;">
+                  <input type="checkbox" value="${center.id}" ${checked} />
+                  <span>${escapeHtml(label)}</span>
+                </label>
+              `;
+            })
+            .join("");
+          return `
+            <div style="margin-top:8px;">
+              <div class="small muted">${escapeHtml(groupName)}</div>
+              <div class="row wrap" style="gap:8px; margin-top:6px;">
+                ${centerOptions}
+              </div>
+            </div>
+          `;
+        })
+        .join("")
+    : `<div class="muted small">No profit centers configured yet.</div>`;
 
   const termSummaryItems = terms.map((t) => {
     const value = t.value_normalized || t.value_raw || "";
@@ -1392,6 +1459,31 @@ function renderContractDetail(data) {
         <button id="saveContractMeta">Save</button>
       </div>
     </div>
+    <details class="section">
+      <summary>
+        <span class="summary-chevron" aria-hidden="true">▸</span>
+        <span class="summary-title">Profit Centers</span>
+      </summary>
+      <div class="muted small" style="margin-top:6px;">
+        ${isAdmin ? "Assign profit centers to control contract visibility." : "Assigned profit centers for this contract."}
+      </div>
+      <div class="row wrap" style="gap:6px; margin-top:6px;">
+        ${profitCenterPills}
+      </div>
+      ${
+        isAdmin
+          ? `
+            <div class="muted small" style="margin-top:10px;">Update assignments</div>
+            <div id="contractProfitCenterOptions" style="margin-top:6px;">
+              ${profitCenterOptionsHtml}
+            </div>
+            <div class="row wrap" style="margin-top:8px;">
+              <button id="saveContractProfitCenters">Save profit centers</button>
+            </div>
+          `
+          : ""
+      }
+    </details>
     <div class="section">
       <h4>Extracted Terms</h4>
       <div class="row wrap" style="gap:6px;">${termSummaryHtml}</div>
@@ -1531,6 +1623,20 @@ function renderContractDetail(data) {
         }),
       });
       await loadRecent();
+      await loadDetail(c.id);
+    } catch (e) {
+      await showAlert(e.message, { title: "Update failed" });
+    }
+  });
+
+  $("saveContractProfitCenters")?.addEventListener("click", async () => {
+    const profitCenterIds = getCheckedValues("contractProfitCenterOptions").map((value) => Number(value));
+    try {
+      await apiFetch(`/api/contracts/${c.id}/profit-centers`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profit_center_ids: profitCenterIds }),
+      });
       await loadDetail(c.id);
     } catch (e) {
       await showAlert(e.message, { title: "Update failed" });
@@ -1847,6 +1953,9 @@ async function loadDetail(id) {
   try {
     if (!state.definitions.length || !state.tags.length || !state.agreementTypes.length) {
       await loadReferenceData();
+    }
+    if (isAdminUser()) {
+      await ensureProfitCentersLoaded();
     }
     const res = await apiFetch(`/api/contracts/${id}`);
     const data = await res.json();
@@ -2217,6 +2326,20 @@ function getCheckedValues(containerId) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
 }
 
+function getProfitCenterOptions() {
+  return (state.profitCenters || []).map((center) => ({
+    id: center.id,
+    name: `${center.code} — ${center.name}${center.group_name ? ` (${center.group_name})` : ""}`,
+  }));
+}
+
+function getProfitCenterGroups() {
+  const groups = (state.profitCenters || [])
+    .map((center) => center.group_name)
+    .filter((group) => group && group.trim());
+  return Array.from(new Set(groups)).sort((a, b) => a.localeCompare(b));
+}
+
 function renderUserDirectories() {
   const targets = ["pendingUserDirectory", "taskUserDirectory"];
   targets.forEach((targetId) => {
@@ -2282,6 +2405,8 @@ function resetAdminUserForm() {
   if (isActive) isActive.checked = true;
   if (isAdmin) isAdmin.checked = false;
   renderCheckboxList("adminUserRoles", state.roles, []);
+  renderCheckboxList("adminUserProfitCenters", getProfitCenterOptions(), []);
+  renderCheckboxList("adminUserProfitCenterGroups", getProfitCenterGroups(), []);
   $("adminUserSave")?.setAttribute("data-mode", "create");
   const adminUserSave = $("adminUserSave");
   if (adminUserSave) adminUserSave.textContent = "Add user";
@@ -2302,6 +2427,12 @@ function openAdminUserEdit(user) {
   if (isActive) isActive.checked = Boolean(user.is_active);
   if (isAdmin) isAdmin.checked = Boolean(user.is_admin);
   renderCheckboxList("adminUserRoles", state.roles, user.role_ids || []);
+  renderCheckboxList("adminUserProfitCenters", getProfitCenterOptions(), user.profit_center_ids || []);
+  renderCheckboxList(
+    "adminUserProfitCenterGroups",
+    getProfitCenterGroups(),
+    user.profit_center_groups || [],
+  );
   $("adminUserSave")?.setAttribute("data-mode", "edit");
   const adminUserSave = $("adminUserSave");
   if (adminUserSave) adminUserSave.textContent = "Update user";
@@ -2357,8 +2488,10 @@ function resetAdminProfitCenterForm() {
   state.adminProfitCenterEditId = null;
   const code = $("adminProfitCenterCode");
   const name = $("adminProfitCenterName");
+  const group = $("adminProfitCenterGroup");
   if (code) code.value = "";
   if (name) name.value = "";
+  if (group) group.value = "";
   $("adminProfitCenterSave")?.setAttribute("data-mode", "create");
   const adminProfitCenterSave = $("adminProfitCenterSave");
   if (adminProfitCenterSave) adminProfitCenterSave.textContent = "Add profit center";
@@ -2383,8 +2516,10 @@ function openAdminProfitCenterEdit(center) {
   state.adminProfitCenterEditId = center.id;
   const code = $("adminProfitCenterCode");
   const name = $("adminProfitCenterName");
+  const group = $("adminProfitCenterGroup");
   if (code) code.value = center.code || "";
   if (name) name.value = center.name || "";
+  if (group) group.value = center.group_name || "";
   $("adminProfitCenterSave")?.setAttribute("data-mode", "edit");
   const adminProfitCenterSave = $("adminProfitCenterSave");
   if (adminProfitCenterSave) adminProfitCenterSave.textContent = "Update profit center";
@@ -2436,7 +2571,7 @@ function renderAdminProfitCenters() {
   const tbody = $("adminProfitCentersTable");
   if (!tbody) return;
   if (!state.profitCenters.length) {
-    tbody.innerHTML = `<tr><td colspan="3" class="muted small">No profit centers configured yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="muted small">No profit centers configured yet.</td></tr>`;
     return;
   }
   tbody.innerHTML = state.profitCenters
@@ -2445,6 +2580,7 @@ function renderAdminProfitCenters() {
         <tr>
           <td>${escapeHtml(center.code || "")}</td>
           <td>${escapeHtml(center.name || "")}</td>
+          <td>${escapeHtml(center.group_name || "—")}</td>
           <td>
             <button class="small admin-profit-center-edit" data-profit-center-id="${center.id}">
               Edit
@@ -2662,6 +2798,8 @@ function initAdminUi() {
     const isActive = $("adminUserActive")?.checked ?? true;
     const isAdmin = $("adminUserAdmin")?.checked ?? false;
     const roles = getCheckedValues("adminUserRoles").map((value) => Number(value));
+    const profitCenterIds = getCheckedValues("adminUserProfitCenters").map((value) => Number(value));
+    const profitCenterGroups = getCheckedValues("adminUserProfitCenterGroups");
     const status = $("adminUserStatus");
 
     if (!name || !email || (!state.adminUserEditId && !password)) {
@@ -2675,6 +2813,8 @@ function initAdminUi() {
           email,
           password: password || undefined,
           roles,
+          profit_center_ids: profitCenterIds,
+          profit_center_groups: profitCenterGroups,
           is_active: isActive,
           is_admin: isAdmin,
         });
@@ -2684,6 +2824,8 @@ function initAdminUi() {
           email,
           password,
           roles,
+          profit_center_ids: profitCenterIds,
+          profit_center_groups: profitCenterGroups,
           is_active: isActive,
           is_admin: isAdmin,
         });
@@ -2719,6 +2861,7 @@ function initAdminUi() {
   $("adminProfitCenterSave")?.addEventListener("click", async () => {
     const code = $("adminProfitCenterCode")?.value.trim() || "";
     const name = $("adminProfitCenterName")?.value.trim() || "";
+    const groupName = $("adminProfitCenterGroup")?.value.trim() || "";
     const status = $("adminProfitCenterStatus");
     if (!code || !name) {
       if (status) status.textContent = "Profit center code and name are required.";
@@ -2726,9 +2869,13 @@ function initAdminUi() {
     }
     try {
       if (state.adminProfitCenterEditId) {
-        await updateProfitCenter(state.adminProfitCenterEditId, { code, name });
+        await updateProfitCenter(state.adminProfitCenterEditId, {
+          code,
+          name,
+          group_name: groupName || null,
+        });
       } else {
-        await createProfitCenter({ code, name });
+        await createProfitCenter({ code, name, group_name: groupName || null });
       }
       await loadAdminData();
       if (status) status.textContent = "Profit center saved.";
