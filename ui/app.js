@@ -1313,13 +1313,26 @@ function renderContractDetail(data) {
     (c.profit_center_ids || assignedProfitCenters.map((center) => center.id)).map((id) => String(id)),
   );
   const availableProfitCenters = state.profitCenters.length ? state.profitCenters : assignedProfitCenters;
-  const profitCenterPills = assignedProfitCenters.length
-    ? assignedProfitCenters
-        .map((center) => {
-          const groupLabel = center.group_name ? ` · ${center.group_name}` : "";
-          return `<span class="pill">${escapeHtml(`${center.code} — ${center.name}${groupLabel}`)}</span>`;
+  const profitCenterSummaryHtml = assignedProfitCenters.length
+    ? Object.entries(
+        assignedProfitCenters.reduce((grouped, center) => {
+          const group = center.group_name || "Ungrouped";
+          if (!grouped[group]) grouped[group] = [];
+          grouped[group].push(center);
+          return grouped;
+        }, {}),
+      )
+        .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
+        .map(([groupName, centers]) => {
+          const labels = centers.map((center) => `${center.code} — ${center.name}`).join(", ");
+          return `
+            <div class="profit-center-line">
+              <span class="profit-center-group">${escapeHtml(groupName)}</span>
+              <span class="profit-center-items">${escapeHtml(labels)}</span>
+            </div>
+          `;
         })
-        .join(" ")
+        .join("")
     : `<span class="muted small">No profit centers assigned.</span>`;
   const isAdmin = isAdminUser();
   const termLookup = new Map(terms.map((t) => [t.term_key, t]));
@@ -1490,8 +1503,8 @@ function renderContractDetail(data) {
       <div class="muted small" style="margin-top:6px;">
         ${isAdmin ? "Assign profit centers to control contract visibility." : "Assigned profit centers for this contract."}
       </div>
-      <div class="row wrap" style="gap:6px; margin-top:6px;">
-        ${profitCenterPills}
+      <div class="profit-center-summary" style="margin-top:6px;">
+        ${profitCenterSummaryHtml}
       </div>
       ${
         isAdmin
