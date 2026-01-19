@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, date, timedelta
 from email.message import EmailMessage
-from typing import Optional, List, Literal, Dict, Any
+from typing import Optional, List, Literal, Dict, Any, Set
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -280,6 +280,128 @@ def _validate_role_ids(conn: sqlite3.Connection, role_ids: List[int]) -> List[in
     return unique_ids
 
 
+def _validate_profit_center_ids(conn: sqlite3.Connection, profit_center_ids: List[int]) -> List[int]:
+    if not profit_center_ids:
+        return []
+    unique_ids = sorted(set(profit_center_ids))
+    placeholders = ",".join("?" for _ in unique_ids)
+    rows = conn.execute(
+        f"SELECT id FROM profit_centers WHERE id IN ({placeholders})",
+        tuple(unique_ids),
+    ).fetchall()
+    found = {row["id"] for row in rows}
+    missing = [center_id for center_id in unique_ids if center_id not in found]
+    if missing:
+        missing_list = ", ".join(str(center_id) for center_id in missing)
+        raise HTTPException(status_code=400, detail=f"Unknown profit center id(s): {missing_list}")
+    return unique_ids
+
+
+def _validate_profit_center_groups(conn: sqlite3.Connection, group_names: List[str]) -> List[str]:
+    if not group_names:
+        return []
+    cleaned = sorted({name.strip() for name in group_names if name and name.strip()})
+    if not cleaned:
+        return []
+    placeholders = ",".join("?" for _ in cleaned)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT group_name
+        FROM profit_centers
+        WHERE group_name IN ({placeholders})
+        """,
+        tuple(cleaned),
+    ).fetchall()
+    found = {row["group_name"] for row in rows if row["group_name"]}
+    missing = [name for name in cleaned if name not in found]
+    if missing:
+        missing_list = ", ".join(missing)
+        raise HTTPException(
+            status_code=400, detail=f"Unknown profit center group(s): {missing_list}"
+        )
+    return cleaned
+
+
+def _get_user_profit_center_ids(conn: sqlite3.Connection, user_id: int) -> List[int]:
+    rows = conn.execute(
+        "SELECT profit_center_id FROM user_profit_centers WHERE user_id = ?",
+        (user_id,),
+    ).fetchall()
+    return [row["profit_center_id"] for row in rows]
+
+
+def _get_user_profit_center_groups(conn: sqlite3.Connection, user_id: int) -> List[str]:
+    rows = conn.execute(
+        "SELECT group_name FROM user_profit_center_groups WHERE user_id = ?",
+        (user_id,),
+    ).fetchall()
+    return [row["group_name"] for row in rows if row["group_name"]]
+
+
+def _set_user_profit_centers(
+    conn: sqlite3.Connection, user_id: int, profit_center_ids: List[int]
+) -> None:
+    conn.execute("DELETE FROM user_profit_centers WHERE user_id = ?", (user_id,))
+    if not profit_center_ids:
+        return
+    now = now_iso()
+    conn.executemany(
+        """
+        INSERT INTO user_profit_centers (user_id, profit_center_id, created_at)
+        VALUES (?, ?, ?)
+        """,
+        [(user_id, center_id, now) for center_id in profit_center_ids],
+    )
+
+
+def _set_user_profit_center_groups(
+    conn: sqlite3.Connection, user_id: int, group_names: List[str]
+) -> None:
+    conn.execute("DELETE FROM user_profit_center_groups WHERE user_id = ?", (user_id,))
+    if not group_names:
+        return
+    now = now_iso()
+    conn.executemany(
+        """
+        INSERT INTO user_profit_center_groups (user_id, group_name, created_at)
+        VALUES (?, ?, ?)
+        """,
+        [(user_id, name, now) for name in group_names],
+    )
+
+
+def _get_contract_profit_centers(
+    conn: sqlite3.Connection, contract_id: str
+) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT pc.id, pc.code, pc.name, pc.group_name
+        FROM contract_profit_centers cpc
+        JOIN profit_centers pc ON pc.id = cpc.profit_center_id
+        WHERE cpc.contract_id = ?
+        ORDER BY pc.group_name, pc.code, pc.name
+        """,
+        (contract_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _set_contract_profit_centers(
+    conn: sqlite3.Connection, contract_id: str, profit_center_ids: List[int]
+) -> None:
+    conn.execute("DELETE FROM contract_profit_centers WHERE contract_id = ?", (contract_id,))
+    if not profit_center_ids:
+        return
+    now = now_iso()
+    conn.executemany(
+        """
+        INSERT INTO contract_profit_centers (contract_id, profit_center_id, created_at)
+        VALUES (?, ?, ?)
+        """,
+        [(contract_id, center_id, now) for center_id in profit_center_ids],
+    )
+
+
 def _set_user_roles(conn: sqlite3.Connection, user_id: int, role_ids: List[int]) -> None:
     conn.execute("DELETE FROM auth_user_roles WHERE user_id = ?", (user_id,))
     if not role_ids:
@@ -439,6 +561,90 @@ def _seed_agreement_types(conn: sqlite3.Connection) -> None:
             )
 
 
+DEFAULT_PROFIT_CENTERS = [
+    {"group": "Transportation", "code": "6000", "name": "Transportation - Taylor"},
+    {"group": "Transportation", "code": "6020", "name": "Transportation - Niles"},
+    {"group": "Transportation", "code": "6030", "name": "Transportation - Indy"},
+    {"group": "Transportation", "code": "6040", "name": "Transportation - Toledo/Findlay/Lima"},
+    {"group": "Transportation", "code": "6050", "name": "Transportation - Louisville"},
+    {"group": "Transportation", "code": "6060", "name": "Transportation - Denver"},
+    {"group": "Transportation", "code": "6070", "name": "Transportation - Houston"},
+    {"group": "Transportation", "code": "1109", "name": "Tankwagon - Seaway RRARELY USED"},
+    {"group": "Frac", "code": "1120", "name": "Fracking Services - Evans, CO"},
+    {"group": "Frac", "code": "1121", "name": "Wyoming Frac"},
+    {"group": "Frac", "code": "1122", "name": "Fracking Services - Odessa, TX (West TX)"},
+    {"group": "Frac", "code": "1123", "name": "Fracking Services - Williston, ND"},
+    {"group": "Frac", "code": "1124", "name": "Fracking Services - Victoria, TX (South TX)"},
+    {"group": "Frac", "code": "1125", "name": "Fracking Services - Longview, TX (East TX)"},
+    {"group": "Frac", "code": "1126", "name": "Asherton TX Frac"},
+    {"group": "Frac", "code": "1127", "name": "Guthrie OK Frac"},
+    {"group": "Frac", "code": "1128", "name": "Pennsylvania FRAC"},
+    {"group": "Frac", "code": "1130", "name": "Frac General"},
+    {"group": "Fuel Automation Station", "code": "1131", "name": "FAS Command Center Houston"},
+    {"group": "Fuel Automation Station", "code": "8120", "name": "FAS-CO"},
+    {"group": "Fuel Automation Station", "code": "8120", "name": "FAS-Utah"},
+    {"group": "Fuel Automation Station", "code": "8121", "name": "FAS-WY"},
+    {"group": "Fuel Automation Station", "code": "8122", "name": "FAS-W TX Odessa"},
+    {"group": "Fuel Automation Station", "code": "8123", "name": "FAS-ND"},
+    {"group": "Fuel Automation Station", "code": "8124", "name": "FAS-S TX Victoria"},
+    {"group": "Fuel Automation Station", "code": "8125", "name": "FAS-E TX Kilgore"},
+    {"group": "Fuel Automation Station", "code": "8126", "name": "FAS - Asherton"},
+    {"group": "Fuel Automation Station", "code": "8127", "name": "FAS - Guthrie, OK"},
+    {"group": "Fuel Automation Station", "code": "8128", "name": "FAS - WA PA"},
+    {"group": "Fuel Automation Station", "code": "8130", "name": "FAS Resources"},
+    {"group": "Fuel Automation Station", "code": "8131", "name": "Houston Command Center FAS"},
+    {"group": "Lubes", "code": "1150", "name": "DEF/Lubes - General"},
+    {"group": "Lubes", "code": "1151", "name": "Longview Lubricants"},
+    {"group": "Lubes", "code": "1152", "name": "Guthrie OK Lubricants"},
+    {"group": "Lubes", "code": "1153", "name": "Odessa Lubricants"},
+    {"group": "Lubes", "code": "1154", "name": "Victoria Lubricants"},
+    {"group": "Lubes", "code": "1155", "name": "Fort Lupton Lubricants"},
+    {"group": "CNG", "code": "1170", "name": "CNG Resources"},
+    {"group": "CNG", "code": "1172", "name": "CNG West Texas - Odessa"},
+    {"group": "CNG", "code": "1173", "name": "CNG New Mexico"},
+    {"group": "CNG", "code": "1174", "name": "CNG Colorado"},
+    {"group": "CNG", "code": "1175", "name": "CNG South TX - Victoria"},
+    {"group": "CNG", "code": "1176", "name": "CNG East TX - Longview"},
+    {"group": "Supply and Marketing", "code": "1200", "name": "Commercial Sales & Supply (Justin S/Michael N)"},
+    {"group": "Supply and Marketing", "code": "1201", "name": "S & T - Propane/Butane (Joon/Jay/Kyle)"},
+    {"group": "Supply and Marketing", "code": "1202", "name": "TRIGG - RARELY USED"},
+    {"group": "Supply and Marketing", "code": "1210", "name": "S & T - BLENDING (Eric F/Ismail)"},
+    {"group": "Supply and Marketing", "code": "1213", "name": "S & M NYH Blending (J Hutchinson)"},
+    {"group": "Supply and Marketing", "code": "1214", "name": "S & M Nyh Fuel Oil (A. Kopko)"},
+    {"group": "Supply and Marketing", "code": "1215", "name": "S & M Diesel (Austin L.)"},
+    {"group": "Supply and Marketing", "code": "1216", "name": "S & M Waterborne (M Donnellan)"},
+    {"group": "Supply and Marketing", "code": "1220", "name": "S & T - Ethanol - Mex-S TX (Brendan)"},
+    {"group": "Supply and Marketing", "code": "1225", "name": "S & M Natural Gas (Peter)"},
+    {"group": "Supply and Marketing", "code": "1226", "name": "S & M Natural Gas (Zach)"},
+    {"group": "Supply and Marketing", "code": "1230", "name": "S & M Mid Con (David)"},
+    {"group": "Supply and Marketing", "code": "1235", "name": "S & M Crude (C. Dillman)"},
+    {"group": "Supply and Marketing", "code": "1250", "name": "FINANCIAL: Thom Severson and Art"},
+    {"group": "Corporate", "code": "1900", "name": "Accounting PC to re-allocate expenses"},
+    {"group": "Corporate", "code": "9100", "name": "Corporate"},
+    {"group": "Transload", "code": "7200", "name": "Transloading - ABQ - Ethanol"},
+    {"group": "Transload", "code": "7212", "name": "Transloading - Evans, CO"},
+    {"group": "Family Office", "code": "SGH I", "name": "SGH I"},
+    {"group": "Family Office", "code": "SGH II", "name": "SGH II"},
+    {"group": "Family Office", "code": "SGH III", "name": "SGH III"},
+    {"group": "Family Office", "code": "SREG", "name": "SREG"},
+    {"group": "Family Office", "code": "SIMON SPORTS", "name": "SIMON SPORTS"},
+    {"group": "Family Office", "code": "FOUNDATION", "name": "FOUNDATION"},
+    {"group": "Family Office", "code": "MISC.", "name": "MISC."},
+]
+
+
+def _seed_profit_centers(conn: sqlite3.Connection) -> None:
+    existing = conn.execute("SELECT COUNT(1) AS count FROM profit_centers").fetchone()
+    if existing and existing["count"] == 0:
+        conn.executemany(
+            "INSERT INTO profit_centers (code, name, group_name, created_at) VALUES (?, ?, ?, ?)",
+            [
+                (item["code"], item["name"], item["group"], now_iso())
+                for item in DEFAULT_PROFIT_CENTERS
+            ],
+        )
+
+
 def _apply_migrations(conn: sqlite3.Connection) -> None:
     """Apply simple, idempotent schema migrations for existing databases."""
 
@@ -511,14 +717,84 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             """
             CREATE TABLE IF NOT EXISTS profit_centers (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              code TEXT NOT NULL UNIQUE,
+              code TEXT NOT NULL,
               name TEXT NOT NULL,
+              group_name TEXT,
               created_at TEXT NOT NULL
             );
             """
         )
+    else:
+        profit_center_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(profit_centers)").fetchall()
+        }
+        if "group_name" not in profit_center_columns:
+            has_unique_code = False
+            for idx in conn.execute("PRAGMA index_list(profit_centers)").fetchall():
+                if not idx["unique"]:
+                    continue
+                index_info = conn.execute(f"PRAGMA index_info({idx['name']})").fetchall()
+                if any(row["name"] == "code" for row in index_info):
+                    has_unique_code = True
+                    break
+            if has_unique_code:
+                conn.executescript(
+                    """
+                    ALTER TABLE profit_centers RENAME TO profit_centers_old;
+                    CREATE TABLE profit_centers (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      code TEXT NOT NULL,
+                      name TEXT NOT NULL,
+                      group_name TEXT,
+                      created_at TEXT NOT NULL
+                    );
+                    INSERT INTO profit_centers (id, code, name, group_name, created_at)
+                    SELECT id, code, name, NULL, created_at FROM profit_centers_old;
+                    DROP TABLE profit_centers_old;
+                    """
+                )
+            else:
+                conn.execute("ALTER TABLE profit_centers ADD COLUMN group_name TEXT")
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS contract_profit_centers (
+          contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+          profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (contract_id, profit_center_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_contract_profit_centers_contract
+          ON contract_profit_centers(contract_id);
+        CREATE INDEX IF NOT EXISTS idx_contract_profit_centers_center
+          ON contract_profit_centers(profit_center_id);
+
+        CREATE TABLE IF NOT EXISTS user_profit_centers (
+          user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+          profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, profit_center_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_profit_centers_user
+          ON user_profit_centers(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_profit_centers_center
+          ON user_profit_centers(profit_center_id);
+
+        CREATE TABLE IF NOT EXISTS user_profit_center_groups (
+          user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+          group_name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, group_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_user
+          ON user_profit_center_groups(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_name
+          ON user_profit_center_groups(group_name);
+        """
+    )
 
     _seed_agreement_types(conn)
+    _seed_profit_centers(conn)
 
     conn.execute(
         """
@@ -802,6 +1078,7 @@ class AgreementTypeKeywordCreate(BaseModel):
 class ProfitCenterCreate(BaseModel):
     code: str
     name: str
+    group_name: Optional[str] = None
 
     @field_validator("code", mode="before")
     def normalize_code(cls, value: str) -> str:
@@ -811,10 +1088,18 @@ class ProfitCenterCreate(BaseModel):
     def normalize_name(cls, value: str) -> str:
         return str(value or "").strip()
 
+    @field_validator("group_name", mode="before")
+    def normalize_group(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip()
+        return cleaned or None
+
 
 class ProfitCenterUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
+    group_name: Optional[str] = None
 
     @field_validator("code", mode="before")
     def normalize_code(cls, value: Optional[str]) -> Optional[str]:
@@ -827,6 +1112,13 @@ class ProfitCenterUpdate(BaseModel):
         if value is None:
             return None
         return str(value or "").strip()
+
+    @field_validator("group_name", mode="before")
+    def normalize_group(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip()
+        return cleaned or None
 
 
 class NotificationUserCreate(BaseModel):
@@ -869,6 +1161,8 @@ class AdminUserCreate(BaseModel):
     email: str
     password: str
     roles: List[int] = Field(default_factory=list)
+    profit_center_ids: List[int] = Field(default_factory=list)
+    profit_center_groups: List[str] = Field(default_factory=list)
     is_active: bool = True
     is_admin: bool = False
 
@@ -894,12 +1188,39 @@ class AdminUserCreate(BaseModel):
                 raise ValueError("role IDs must be integers") from exc
         return []
 
+    @field_validator("profit_center_ids", mode="before")
+    def normalize_profit_center_ids(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            try:
+                return [int(v) for v in cleaned]
+            except ValueError as exc:
+                raise ValueError("profit center IDs must be integers") from exc
+        return []
+
+    @field_validator("profit_center_groups", mode="before")
+    def normalize_profit_center_groups(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            return cleaned
+        return []
+
 
 class AdminUserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
     roles: Optional[List[int]] = None
+    profit_center_ids: Optional[List[int]] = None
+    profit_center_groups: Optional[List[str]] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
 
@@ -927,6 +1248,31 @@ class AdminUserUpdate(BaseModel):
                 return [int(v) for v in cleaned]
             except ValueError as exc:
                 raise ValueError("role IDs must be integers") from exc
+        return []
+
+    @field_validator("profit_center_ids", mode="before")
+    def normalize_profit_center_ids(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            try:
+                return [int(v) for v in cleaned]
+            except ValueError as exc:
+                raise ValueError("profit center IDs must be integers") from exc
+        return []
+
+    @field_validator("profit_center_groups", mode="before")
+    def normalize_profit_center_groups(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            return cleaned
         return []
 
 
@@ -1128,6 +1474,24 @@ class ContractUpdate(BaseModel):
     agreement_type: Optional[str] = None
 
 
+class ContractProfitCenterUpdate(BaseModel):
+    profit_center_ids: List[int] = Field(default_factory=list)
+
+    @field_validator("profit_center_ids", mode="before")
+    def normalize_profit_center_ids(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            try:
+                return [int(v) for v in cleaned]
+            except ValueError as exc:
+                raise ValueError("profit center IDs must be integers") from exc
+        return []
+
+
 class TermUpsert(BaseModel):
     term_key: str
     value_raw: str
@@ -1234,10 +1598,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_agreement_type_keywords_type_keyword ON agr
 
 CREATE TABLE IF NOT EXISTS profit_centers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  code TEXT NOT NULL UNIQUE,
+  code TEXT NOT NULL,
   name TEXT NOT NULL,
+  group_name TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS contract_profit_centers (
+  contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (contract_id, profit_center_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contract_profit_centers_contract
+  ON contract_profit_centers(contract_id);
+CREATE INDEX IF NOT EXISTS idx_contract_profit_centers_center
+  ON contract_profit_centers(profit_center_id);
+
+CREATE TABLE IF NOT EXISTS user_profit_centers (
+  user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, profit_center_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_profit_centers_user
+  ON user_profit_centers(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_profit_centers_center
+  ON user_profit_centers(profit_center_id);
+
+CREATE TABLE IF NOT EXISTS user_profit_center_groups (
+  user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  group_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, group_name)
+);
+CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_user
+  ON user_profit_center_groups(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_name
+  ON user_profit_center_groups(group_name);
 
 CREATE TABLE IF NOT EXISTS ocr_pages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2109,7 +2507,7 @@ def create_agreement_type_keyword(
 def list_profit_centers(_: Dict[str, Any] = Depends(require_admin)):
     with db() as conn:
         rows = conn.execute(
-            "SELECT id, code, name FROM profit_centers ORDER BY code"
+            "SELECT id, code, name, group_name FROM profit_centers ORDER BY group_name, code, name"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -2122,10 +2520,15 @@ def create_profit_center(
         raise HTTPException(status_code=400, detail="Profit center code and name are required")
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO profit_centers (code, name, created_at) VALUES (?, ?, ?)",
-            (payload.code, payload.name, now_iso()),
+            "INSERT INTO profit_centers (code, name, group_name, created_at) VALUES (?, ?, ?, ?)",
+            (payload.code, payload.name, payload.group_name, now_iso()),
         )
-        return {"id": cur.lastrowid, "code": payload.code, "name": payload.name}
+        return {
+            "id": cur.lastrowid,
+            "code": payload.code,
+            "name": payload.name,
+            "group_name": payload.group_name,
+        }
 
 
 @app.put("/api/profit-centers/{profit_center_id}")
@@ -2136,19 +2539,28 @@ def update_profit_center(
 ):
     with db() as conn:
         row = conn.execute(
-            "SELECT id, code, name FROM profit_centers WHERE id = ?", (profit_center_id,)
+            "SELECT id, code, name, group_name FROM profit_centers WHERE id = ?",
+            (profit_center_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Profit center not found")
         code = payload.code if payload.code is not None else row["code"]
         name = payload.name if payload.name is not None else row["name"]
+        group_name = (
+            payload.group_name if payload.group_name is not None else row["group_name"]
+        )
         if not code or not name:
             raise HTTPException(status_code=400, detail="Profit center code and name are required")
         conn.execute(
-            "UPDATE profit_centers SET code = ?, name = ? WHERE id = ?",
-            (code, name, profit_center_id),
+            "UPDATE profit_centers SET code = ?, name = ?, group_name = ? WHERE id = ?",
+            (code, name, group_name, profit_center_id),
         )
-        return {"id": profit_center_id, "code": code, "name": name}
+        return {
+            "id": profit_center_id,
+            "code": code,
+            "name": name,
+            "group_name": group_name,
+        }
 
 
 @app.delete("/api/profit-centers/{profit_center_id}")
@@ -2307,6 +2719,8 @@ def list_admin_users(_: Dict[str, Any] = Depends(require_admin)):
                     "is_active": bool(row["is_active"]),
                     "is_admin": bool(row["is_admin"]) if "is_admin" in row.keys() else False,
                     "role_ids": _get_user_role_ids(conn, row["id"]),
+                    "profit_center_ids": _get_user_profit_center_ids(conn, row["id"]),
+                    "profit_center_groups": _get_user_profit_center_groups(conn, row["id"]),
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                 }
@@ -2322,6 +2736,8 @@ def create_admin_user(payload: AdminUserCreate, _: Dict[str, Any] = Depends(requ
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
     with db() as conn:
         role_ids = _validate_role_ids(conn, payload.roles)
+        profit_center_ids = _validate_profit_center_ids(conn, payload.profit_center_ids)
+        profit_center_groups = _validate_profit_center_groups(conn, payload.profit_center_groups)
         now = now_iso()
         password_hash = hash_password(payload.password)
         try:
@@ -2362,6 +2778,8 @@ def create_admin_user(payload: AdminUserCreate, _: Dict[str, Any] = Depends(requ
             raise HTTPException(status_code=400, detail="User email already exists") from exc
         user_id = cur.lastrowid
         _set_user_roles(conn, user_id, role_ids)
+        _set_user_profit_centers(conn, user_id, profit_center_ids)
+        _set_user_profit_center_groups(conn, user_id, profit_center_groups)
         return {"id": user_id}
 
 
@@ -2376,6 +2794,8 @@ def update_admin_user(
         and payload.email is None
         and payload.password is None
         and payload.roles is None
+        and payload.profit_center_ids is None
+        and payload.profit_center_groups is None
         and payload.is_active is None
         and payload.is_admin is None
     ):
@@ -2415,6 +2835,14 @@ def update_admin_user(
         if payload.roles is not None:
             role_ids = _validate_role_ids(conn, payload.roles)
             _set_user_roles(conn, user_id, role_ids)
+        if payload.profit_center_ids is not None:
+            profit_center_ids = _validate_profit_center_ids(conn, payload.profit_center_ids)
+            _set_user_profit_centers(conn, user_id, profit_center_ids)
+        if payload.profit_center_groups is not None:
+            profit_center_groups = _validate_profit_center_groups(
+                conn, payload.profit_center_groups
+            )
+            _set_user_profit_center_groups(conn, user_id, profit_center_groups)
         return {"id": user_id}
 
 
@@ -3359,8 +3787,12 @@ async def upload_contract(
 @app.post("/api/contracts/{contract_id}/reprocess")
 def reprocess_single_contract(
     contract_id: str,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
+    with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
     return _reprocess_contract(contract_id)
 
 
@@ -3432,6 +3864,7 @@ def reprocess_contracts(
 def get_calendar_events(
     start: str,
     end: str,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
     """Get events for calendar view (start and end are YYYY-MM-DD)"""
@@ -3446,6 +3879,21 @@ def get_calendar_events(
             """,
             (start, end),
         ).fetchall()
+
+        context = _get_visibility_context(conn, request)
+        if context is not None and rows:
+            contract_ids = [row["contract_id"] for row in rows]
+            visible_ids = set(
+                _filter_contract_visibility(
+                    conn,
+                    contract_ids,
+                    context["user_role_ids"],
+                    context["user_profit_center_ids"],
+                    context["user_profit_center_groups"],
+                    context["is_admin"],
+                )
+            )
+            rows = [row for row in rows if row["contract_id"] in visible_ids]
 
         events = []
         for r in rows:
@@ -3471,13 +3919,37 @@ def get_calendar_events(
 # ----------------------------
 # Contract visibility helpers
 # ----------------------------
+def _get_visibility_context(
+    conn: sqlite3.Connection, request: Optional[Request]
+) -> Optional[Dict[str, Any]]:
+    if not AUTH_REQUIRED or request is None:
+        return None
+    user = get_current_user(request)
+    if not user:
+        return None
+    role_ids = _get_user_role_ids(conn, user["id"])
+    profit_center_ids = _get_user_profit_center_ids(conn, user["id"])
+    profit_center_groups = _get_user_profit_center_groups(conn, user["id"])
+    is_admin = "admin" in user.get("roles", [])
+    return {
+        "user_role_ids": role_ids,
+        "user_profit_center_ids": profit_center_ids,
+        "user_profit_center_groups": profit_center_groups,
+        "is_admin": is_admin,
+    }
+
 def _filter_contract_visibility(
     conn: sqlite3.Connection,
     contract_ids: List[str],
     user_role_ids: List[int],
+    user_profit_center_ids: List[int],
+    user_profit_center_groups: List[str],
+    is_admin: bool,
 ) -> List[str]:
     if not contract_ids:
         return []
+    if is_admin:
+        return contract_ids
     placeholders = ",".join("?" for _ in contract_ids)
     restricted_rows = conn.execute(
         f"""
@@ -3490,9 +3962,9 @@ def _filter_contract_visibility(
     ).fetchall()
     restricted_ids = {row["contract_id"] for row in restricted_rows}
     if not restricted_ids:
-        return contract_ids
+        visible_ids: Set[str] = set(contract_ids)
     if not user_role_ids:
-        return [cid for cid in contract_ids if cid not in restricted_ids]
+        visible_ids = {cid for cid in contract_ids if cid not in restricted_ids}
     role_placeholders = ",".join("?" for _ in user_role_ids)
     visible_rows = conn.execute(
         f"""
@@ -3505,7 +3977,61 @@ def _filter_contract_visibility(
         tuple(contract_ids) + tuple(user_role_ids),
     ).fetchall()
     visible_ids = {row["contract_id"] for row in visible_rows}
-    return [cid for cid in contract_ids if cid not in restricted_ids or cid in visible_ids]
+    visible_ids = {cid for cid in contract_ids if cid not in restricted_ids or cid in visible_ids}
+
+    assigned_rows = conn.execute(
+        f"""
+        SELECT DISTINCT contract_id
+        FROM contract_profit_centers
+        WHERE contract_id IN ({placeholders})
+        """,
+        tuple(contract_ids),
+    ).fetchall()
+    assigned_ids = {row["contract_id"] for row in assigned_rows}
+    if not assigned_ids:
+        return [cid for cid in contract_ids if cid in visible_ids]
+
+    unassigned_ids = set(contract_ids) - assigned_ids
+    allowed_ids = set(unassigned_ids)
+    if user_profit_center_ids or user_profit_center_groups:
+        center_placeholders = ",".join("?" for _ in user_profit_center_ids) or "NULL"
+        group_placeholders = ",".join("?" for _ in user_profit_center_groups) or "NULL"
+        allowed_rows = conn.execute(
+            f"""
+            SELECT DISTINCT cpc.contract_id
+            FROM contract_profit_centers cpc
+            JOIN profit_centers pc ON pc.id = cpc.profit_center_id
+            WHERE cpc.contract_id IN ({placeholders})
+              AND (
+                cpc.profit_center_id IN ({center_placeholders})
+                OR pc.group_name IN ({group_placeholders})
+              )
+            """,
+            tuple(contract_ids) + tuple(user_profit_center_ids) + tuple(user_profit_center_groups),
+        ).fetchall()
+        allowed_ids.update(row["contract_id"] for row in allowed_rows)
+
+    visible_ids = visible_ids & allowed_ids
+    return [cid for cid in contract_ids if cid in visible_ids]
+
+
+def _ensure_contract_visibility(
+    conn: sqlite3.Connection,
+    contract_id: str,
+    context: Optional[Dict[str, Any]],
+) -> None:
+    if context is None:
+        return
+    visible_ids = _filter_contract_visibility(
+        conn,
+        [contract_id],
+        context["user_role_ids"],
+        context["user_profit_center_ids"],
+        context["user_profit_center_groups"],
+        context["is_admin"],
+    )
+    if contract_id not in visible_ids:
+        raise HTTPException(status_code=404, detail="Contract not found")
 
 # ----------------------------
 # List contracts
@@ -3586,14 +4112,19 @@ def list_contracts(
             ).fetchall()
 
         result = [dict(r) for r in rows]
-        user_role_ids: List[int] = []
-        if request is not None:
-            user = get_current_user(request)
-            if user:
-                user_role_ids = _get_user_role_ids(conn, user["id"])
-        if result:
+        context = _get_visibility_context(conn, request)
+        if result and context is not None:
             contract_ids = [item["id"] for item in result]
-            visible_ids = set(_filter_contract_visibility(conn, contract_ids, user_role_ids))
+            visible_ids = set(
+                _filter_contract_visibility(
+                    conn,
+                    contract_ids,
+                    context["user_role_ids"],
+                    context["user_profit_center_ids"],
+                    context["user_profit_center_groups"],
+                    context["is_admin"],
+                )
+            )
             result = [item for item in result if item["id"] in visible_ids]
         if not include_tags:
             return result
@@ -3617,6 +4148,7 @@ def list_contracts(
 def update_contract(
     contract_id: str,
     payload: ContractUpdate,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
     with db() as conn:
@@ -3626,6 +4158,8 @@ def update_contract(
         ).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="Contract not found")
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
 
         fields = []
         params: List[Any] = []
@@ -3654,11 +4188,34 @@ def update_contract(
                 ),
             )
 
-    return get_contract(contract_id)
+    with db() as conn:
+        return _get_contract_detail(conn, contract_id)
+
+
+@app.put("/api/contracts/{contract_id}/profit-centers")
+def update_contract_profit_centers(
+    contract_id: str,
+    payload: ContractProfitCenterUpdate,
+    _: Dict[str, Any] = Depends(require_admin),
+):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM contracts WHERE id = ?",
+            (contract_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        profit_center_ids = _validate_profit_center_ids(conn, payload.profit_center_ids)
+        _set_contract_profit_centers(conn, contract_id, profit_center_ids)
+        return {"contract_id": contract_id, "profit_center_ids": profit_center_ids}
 
 
 @app.delete("/api/contracts/{contract_id}")
-def delete_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
+def delete_contract(
+    contract_id: str,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
         existing = conn.execute(
             "SELECT id, stored_path FROM contracts WHERE id = ?",
@@ -3666,6 +4223,8 @@ def delete_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user))
         ).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="Contract not found")
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
 
         conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
         conn.execute("DELETE FROM contracts_fts WHERE contract_id = ?", (contract_id,))
@@ -3687,63 +4246,79 @@ def delete_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user))
 # ----------------------------
 # Contract detail
 # ----------------------------
-@app.get("/api/contracts/{contract_id}")
-def get_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
-    with db() as conn:
-        c = conn.execute(
-            "SELECT * FROM contracts WHERE id = ?", (contract_id,)
+def _get_contract_detail(conn: sqlite3.Connection, contract_id: str) -> Dict[str, Any]:
+    c = conn.execute(
+        "SELECT * FROM contracts WHERE id = ?", (contract_id,)
+    ).fetchone()
+    if not c:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    terms = conn.execute(
+        """
+        SELECT ti.*, td.name, td.value_type
+        FROM term_instances ti
+        JOIN term_definitions td ON td.key = ti.term_key
+        WHERE ti.contract_id = ?
+        ORDER BY td.priority ASC
+        """,
+        (contract_id,),
+    ).fetchall()
+
+    events = conn.execute(
+        "SELECT * FROM events WHERE contract_id = ? ORDER BY event_date ASC",
+        (contract_id,),
+    ).fetchall()
+
+    tags = conn.execute(
+        """
+        SELECT t.id, t.name, t.color, ct.auto_generated
+        FROM contract_tags ct
+        JOIN tags t ON t.id = ct.tag_id
+        WHERE ct.contract_id = ?
+        """,
+        (contract_id,),
+    ).fetchall()
+
+    reminder_map: Dict[str, Any] = {}
+    for ev in events:
+        rs = conn.execute(
+            "SELECT * FROM reminder_settings WHERE event_id = ?", (ev["id"],)
         ).fetchone()
-        if not c:
-            raise HTTPException(status_code=404, detail="Contract not found")
+        if rs:
+            reminder_map[ev["id"]] = {
+                "enabled": bool(rs["enabled"]),
+                "recipients": rs["recipients"].split(","),
+                "offsets": json.loads(rs["offsets_json"]),
+                "updated_at": rs["updated_at"],
+            }
+        else:
+            reminder_map[ev["id"]] = None
 
-        terms = conn.execute(
-            """
-            SELECT ti.*, td.name, td.value_type
-            FROM term_instances ti
-            JOIN term_definitions td ON td.key = ti.term_key
-            WHERE ti.contract_id = ?
-            ORDER BY td.priority ASC
-            """,
-            (contract_id,),
-        ).fetchall()
+    profit_centers = _get_contract_profit_centers(conn, contract_id)
 
-        events = conn.execute(
-            "SELECT * FROM events WHERE contract_id = ? ORDER BY event_date ASC",
-            (contract_id,),
-        ).fetchall()
+    contract_payload = dict(c)
+    contract_payload["profit_centers"] = profit_centers
+    contract_payload["profit_center_ids"] = [pc["id"] for pc in profit_centers]
 
-        tags = conn.execute(
-            """
-            SELECT t.id, t.name, t.color, ct.auto_generated
-            FROM contract_tags ct
-            JOIN tags t ON t.id = ct.tag_id
-            WHERE ct.contract_id = ?
-            """,
-            (contract_id,),
-        ).fetchall()
+    return {
+        "contract": contract_payload,
+        "terms": [dict(t) for t in terms],
+        "events": [dict(e) for e in events],
+        "tags": [dict(t) for t in tags],
+        "reminders": reminder_map,
+    }
 
-        reminder_map: Dict[str, Any] = {}
-        for ev in events:
-            rs = conn.execute(
-                "SELECT * FROM reminder_settings WHERE event_id = ?", (ev["id"],)
-            ).fetchone()
-            if rs:
-                reminder_map[ev["id"]] = {
-                    "enabled": bool(rs["enabled"]),
-                    "recipients": rs["recipients"].split(","),
-                    "offsets": json.loads(rs["offsets_json"]),
-                    "updated_at": rs["updated_at"],
-                }
-            else:
-                reminder_map[ev["id"]] = None
 
-        return {
-            "contract": dict(c),
-            "terms": [dict(t) for t in terms],
-            "events": [dict(e) for e in events],
-            "tags": [dict(t) for t in tags],
-            "reminders": reminder_map,
-        }
+@app.get("/api/contracts/{contract_id}")
+def get_contract(
+    contract_id: str,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_user),
+):
+    with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
+        return _get_contract_detail(conn, contract_id)
 
 
 @app.put("/api/contracts/{contract_id}/terms/{term_key}")
@@ -3751,22 +4326,30 @@ def upsert_term(
     contract_id: str,
     term_key: str,
     payload: TermUpsert,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
     if payload.term_key and payload.term_key != term_key:
         raise HTTPException(status_code=400, detail="term_key mismatch")
     payload.term_key = term_key
+    with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
     _upsert_manual_term(contract_id, payload)
-    return get_contract(contract_id)
+    with db() as conn:
+        return _get_contract_detail(conn, contract_id)
 
 
 @app.delete("/api/contracts/{contract_id}/terms/{term_key}")
 def delete_term(
     contract_id: str,
     term_key: str,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
     with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
         conn.execute(
             "DELETE FROM term_instances WHERE contract_id = ? AND term_key = ?",
             (contract_id, term_key),
@@ -3782,10 +4365,13 @@ def delete_term(
 def create_event(
     contract_id: str,
     payload: EventCreate,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
     event_date = _normalize_date_string(payload.event_date)
     with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
         c = conn.execute(
             "SELECT id FROM contracts WHERE id = ?",
             (contract_id,),
@@ -3844,9 +4430,12 @@ def delete_event(event_id: str, _: Dict[str, Any] = Depends(require_user)):
 @app.get("/api/contracts/{contract_id}/status")
 def get_contract_status(
     contract_id: str,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
     with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
         c = conn.execute(
             "SELECT id, status, pages FROM contracts WHERE id = ?",
             (contract_id,),
@@ -3859,8 +4448,14 @@ def get_contract_status(
 # View / download
 # ----------------------------
 @app.get("/api/contracts/{contract_id}/original")
-def view_original(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
+def view_original(
+    contract_id: str,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
         c = conn.execute(
             "SELECT stored_path, original_filename, mime_type FROM contracts WHERE id = ?",
             (contract_id,),
@@ -3879,8 +4474,14 @@ def view_original(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
 
 
 @app.get("/api/contracts/{contract_id}/download")
-def download_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user)):
+def download_contract(
+    contract_id: str,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_user),
+):
     with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
         c = conn.execute(
             "SELECT stored_path, original_filename, mime_type FROM contracts WHERE id = ?",
             (contract_id,),
@@ -3902,9 +4503,12 @@ def download_contract(contract_id: str, _: Dict[str, Any] = Depends(require_user
 @app.get("/api/contracts/{contract_id}/ocr-text")
 def get_contract_ocr_text(
     contract_id: str,
+    request: Request,
     _: Dict[str, Any] = Depends(require_user),
 ):
     with db() as conn:
+        context = _get_visibility_context(conn, request)
+        _ensure_contract_visibility(conn, contract_id, context)
         c = conn.execute(
             "SELECT id FROM contracts WHERE id = ?",
             (contract_id,),
@@ -3934,6 +4538,7 @@ def get_contract_ocr_text(
 @app.get("/api/events")
 def list_events(
     month: str,
+    request: Request,
     event_type: str = "all",
     sort: str = "date_asc",
     _: Dict[str, Any] = Depends(require_user),
@@ -3982,6 +4587,21 @@ def list_events(
             tuple(params),
         ).fetchall()
 
+        context = _get_visibility_context(conn, request)
+        if context is not None and rows:
+            contract_ids = [row["contract_id"] for row in rows]
+            visible_ids = set(
+                _filter_contract_visibility(
+                    conn,
+                    contract_ids,
+                    context["user_role_ids"],
+                    context["user_profit_center_ids"],
+                    context["user_profit_center_groups"],
+                    context["is_admin"],
+                )
+            )
+            rows = [row for row in rows if row["contract_id"] in visible_ids]
+
         out = []
         for r in rows:
             rs = conn.execute(
@@ -4005,6 +4625,7 @@ def list_events(
 @app.get("/api/search")
 def search(
     mode: SearchMode,
+    request: Request,
     q: str = "",
     term_key: Optional[str] = None,
     limit: int = 50,
@@ -4027,7 +4648,22 @@ def search(
                 """,
                 (like, like, like, limit),
             ).fetchall()
-            return [dict(r) for r in rows]
+            result = [dict(r) for r in rows]
+            context = _get_visibility_context(conn, request)
+            if context is None or not result:
+                return result
+            contract_ids = [item["id"] for item in result]
+            visible_ids = set(
+                _filter_contract_visibility(
+                    conn,
+                    contract_ids,
+                    context["user_role_ids"],
+                    context["user_profit_center_ids"],
+                    context["user_profit_center_groups"],
+                    context["is_admin"],
+                )
+            )
+            return [item for item in result if item["id"] in visible_ids]
 
         if mode == "terms":
             if not term_key:
@@ -4049,7 +4685,22 @@ def search(
                 """,
                 (term_key, like, like, limit),
             ).fetchall()
-            return [dict(r) for r in rows]
+            result = [dict(r) for r in rows]
+            context = _get_visibility_context(conn, request)
+            if context is None or not result:
+                return result
+            contract_ids = [item["id"] for item in result]
+            visible_ids = set(
+                _filter_contract_visibility(
+                    conn,
+                    contract_ids,
+                    context["user_role_ids"],
+                    context["user_profit_center_ids"],
+                    context["user_profit_center_groups"],
+                    context["is_admin"],
+                )
+            )
+            return [item for item in result if item["id"] in visible_ids]
 
         if not q:
             return []
@@ -4065,7 +4716,22 @@ def search(
             """,
             (q, limit),
         ).fetchall()
-        return [dict(r) for r in rows]
+        result = [dict(r) for r in rows]
+        context = _get_visibility_context(conn, request)
+        if context is None or not result:
+            return result
+        contract_ids = [item["id"] for item in result]
+        visible_ids = set(
+            _filter_contract_visibility(
+                conn,
+                contract_ids,
+                context["user_role_ids"],
+                context["user_profit_center_ids"],
+                context["user_profit_center_groups"],
+                context["is_admin"],
+            )
+        )
+        return [item for item in result if item["id"] in visible_ids]
 
 # ----------------------------
 # Reminders

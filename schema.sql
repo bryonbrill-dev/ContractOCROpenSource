@@ -90,10 +90,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_agreement_type_keywords_type_keyword ON agr
 -- =========================
 CREATE TABLE IF NOT EXISTS profit_centers (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  code          TEXT NOT NULL UNIQUE,
+  code          TEXT NOT NULL,
   name          TEXT NOT NULL,
+  group_name    TEXT,
   created_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS contract_profit_centers (
+  contract_id      TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+  created_at       TEXT NOT NULL,
+  PRIMARY KEY (contract_id, profit_center_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contract_profit_centers_contract ON contract_profit_centers(contract_id);
+CREATE INDEX IF NOT EXISTS idx_contract_profit_centers_center ON contract_profit_centers(profit_center_id);
+
+CREATE TABLE IF NOT EXISTS user_profit_centers (
+  user_id          INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  profit_center_id INTEGER NOT NULL REFERENCES profit_centers(id) ON DELETE CASCADE,
+  created_at       TEXT NOT NULL,
+  PRIMARY KEY (user_id, profit_center_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_profit_centers_user ON user_profit_centers(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_profit_centers_center ON user_profit_centers(profit_center_id);
+
+CREATE TABLE IF NOT EXISTS user_profit_center_groups (
+  user_id          INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  group_name       TEXT NOT NULL,
+  created_at       TEXT NOT NULL,
+  PRIMARY KEY (user_id, group_name)
+);
+CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_user ON user_profit_center_groups(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_profit_center_groups_name ON user_profit_center_groups(group_name);
 
 -- =========================
 -- OCR text (per page)

@@ -881,6 +881,10 @@
         </div>
         <div class="small muted" style="margin-top:8px;">Assign roles</div>
         <div id="adminUserRoles" class="row wrap" style="margin-top:6px;"></div>
+        <div class="small muted" style="margin-top:12px;">Assign profit centers</div>
+        <div id="adminUserProfitCenters" class="row wrap" style="margin-top:6px;"></div>
+        <div class="small muted" style="margin-top:12px;">Assign profit center groups</div>
+        <div id="adminUserProfitCenterGroups" class="row wrap" style="margin-top:6px;"></div>
         <div class="row wrap" style="margin-top:8px;">
           <button id="adminUserSave">Add user</button>
           <button id="adminUserCancel" class="link-button" type="button">Cancel</button>
@@ -983,6 +987,9 @@
           <label class="col small">Profit center name
             <input id="adminProfitCenterName" class="muted-input" placeholder="e.g., Commercial Sales & Supply" />
           </label>
+          <label class="col small">Parent group
+            <input id="adminProfitCenterGroup" class="muted-input" placeholder="e.g., Transportation" />
+          </label>
         </div>
         <div class="row wrap" style="margin-top:8px;">
           <button id="adminProfitCenterSave">Add profit center</button>
@@ -994,6 +1001,7 @@
             <tr>
               <th>Code</th>
               <th>Name</th>
+              <th>Group</th>
               <th>Actions</th>
             </tr>
           </thead>
