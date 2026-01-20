@@ -53,6 +53,16 @@ CREATE TABLE IF NOT EXISTS tag_roles (
 CREATE INDEX IF NOT EXISTS idx_tag_roles_tag ON tag_roles(tag_id);
 CREATE INDEX IF NOT EXISTS idx_tag_roles_role ON tag_roles(role_id);
 
+CREATE TABLE IF NOT EXISTS role_permissions (
+  permission_key TEXT NOT NULL,
+  role_id        INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+  created_at     TEXT NOT NULL,
+  PRIMARY KEY (permission_key, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_permissions_key ON role_permissions(permission_key);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id);
+
 -- =========================
 -- Tag keywords (for auto-generation)
 -- =========================
