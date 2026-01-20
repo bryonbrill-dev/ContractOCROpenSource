@@ -3722,6 +3722,7 @@ def _pending_agreement_visible_to_user(
 
 @app.get("/api/pending-agreements")
 def list_pending_agreements(
+    request: Request = None,
     limit: int = 20,
     offset: int = 0,
     query: str = "",
