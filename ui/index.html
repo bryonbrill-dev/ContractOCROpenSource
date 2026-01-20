@@ -532,7 +532,7 @@
       </div>
 
       <div class="row wrap" style="margin-top:12px;">
-        <div class="col card">
+        <div class="col card" id="pendingRemindersCard">
           <h4 style="margin-top:0;">Pending Agreement Reminders</h4>
           <div class="muted small">Save reminder rules for pending approvals and select recipients.</div>
           <div class="section" style="margin-top:10px;">
@@ -579,7 +579,7 @@
           </table>
         </div>
         <div class="col card" style="display:flex; flex-direction:column; gap:12px;">
-          <div class="section">
+          <div class="section" id="pendingUserDirectorySection">
             <h4 style="margin-top:0;">Notification recipients</h4>
             <div class="muted small">Manage the user list used across reminders and task assignments.</div>
             <div id="pendingUserDirectory" class="folder-list"></div>
@@ -644,7 +644,7 @@
       </div>
 
       <div class="row wrap" style="margin-top:12px;">
-        <div class="col card">
+        <div class="col card" id="taskCreateCard">
           <h4 style="margin-top:0;">Create Task</h4>
           <div class="section" style="margin-top:10px;">
             <label class="small" style="display:block; margin-bottom:8px;">
@@ -717,7 +717,7 @@
           <button id="taskQueueLoadMore" class="hidden" type="button" style="margin-top:10px;">
             Load more
           </button>
-          <div class="section" style="margin-top:12px;">
+          <div class="section" id="taskUserDirectorySection" style="margin-top:12px;">
             <h4>User directory</h4>
             <div class="muted small">Define the shared list of users available for reminder configuration.</div>
             <div id="taskUserDirectory" class="folder-list"></div>
@@ -1007,6 +1007,25 @@
           <tbody id="adminTagPermissionsTable"></tbody>
         </table>
         <div id="adminTagStatus" class="muted small" style="margin-top:6px;"></div>
+      </div>
+
+      <div class="section">
+        <h4>Permissions matrix</h4>
+        <div class="muted small" style="margin-top:6px;">
+          Assign roles for page access and actions. Permissions with no assigned roles follow their default access rules.
+        </div>
+        <table class="compact-table" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>Permission</th>
+              <th>Description</th>
+              <th>Allowed roles</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="adminPermissionMatrixTable"></tbody>
+        </table>
+        <div id="adminPermissionStatus" class="muted small" style="margin-top:6px;"></div>
       </div>
 
       <div class="section">
