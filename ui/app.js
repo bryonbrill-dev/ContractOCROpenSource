@@ -47,6 +47,9 @@ const state = {
   notificationTaskReminders: [],
   adminUsers: [],
   tagPermissions: {},
+  permissionDefinitions: [],
+  permissionAssignments: {},
+  userPermissions: [],
   adminUserEditId: null,
   adminRoleEditId: null,
   adminProfitCenterEditId: null,
@@ -241,6 +244,38 @@ function isAdminUser() {
   return !state.authRequired || (currentUser && currentUser.roles?.includes("admin"));
 }
 
+function hasPermission(permissionKey) {
+  if (!state.authRequired) return true;
+  if (isAdminUser()) return true;
+  return state.userPermissions.includes(permissionKey);
+}
+
+function applyPermissionVisibility() {
+  const pendingNav = $("navPendingAgreements");
+  const tasksNav = $("navTasks");
+  if (pendingNav) {
+    pendingNav.classList.toggle("hidden", !hasPermission("pending_agreements_view"));
+  }
+  if (tasksNav) {
+    tasksNav.classList.toggle("hidden", !hasPermission("tasks_view"));
+  }
+
+  $("pendingRemindersCard")?.classList.toggle(
+    "hidden",
+    !hasPermission("pending_agreement_reminders_manage"),
+  );
+  $("pendingUserDirectorySection")?.classList.toggle("hidden", !hasPermission("user_directory_view"));
+  $("pendingAgreementsAdd")?.classList.toggle("hidden", !hasPermission("pending_agreements_manage"));
+
+  $("taskCreateCard")?.classList.toggle("hidden", !hasPermission("tasks_manage"));
+  $("taskUserDirectorySection")?.classList.toggle("hidden", !hasPermission("user_directory_view"));
+
+  renderPendingAgreementsQueue();
+  renderPendingReminderTable();
+  renderTaskTable();
+  renderUserDirectories();
+}
+
 async function loginUser(email, password) {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
@@ -256,7 +291,9 @@ async function loginUser(email, password) {
 async function logoutUser() {
   await apiFetch("/api/auth/logout", { method: "POST" });
   state.currentUser = null;
+  state.userPermissions = [];
   renderAuthStatus();
+  applyPermissionVisibility();
   showAuthOverlay();
 }
 
@@ -713,6 +750,20 @@ async function fetchOptionalJson(path, fallback) {
   }
 }
 
+async function fetchPermissionMatrix() {
+  const res = await apiFetch("/api/permissions");
+  return res.json();
+}
+
+async function updatePermissionMatrix(permissionKey, roles) {
+  const res = await apiFetch(`/api/permissions/${encodeURIComponent(permissionKey)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ roles }),
+  });
+  return res.json();
+}
+
 async function createNotificationUser(payload) {
   const res = await apiFetch("/api/notification-users", {
     method: "POST",
@@ -1053,8 +1104,14 @@ async function loadReferenceData() {
     apiFetch("/api/tags"),
     apiFetch("/api/agreement-types"),
   ]);
+  const permissionsResponse = await fetchOptionalJson("/api/permissions/me", { permissions: [] });
+  state.userPermissions = permissionsResponse.permissions || [];
+  const shouldLoadNotificationUsers =
+    hasPermission("user_directory_view") ||
+    hasPermission("pending_agreement_reminders_manage") ||
+    hasPermission("tasks_manage");
   const [notificationUsers, roles] = await Promise.all([
-    fetchOptionalJson("/api/notification-users", []),
+    shouldLoadNotificationUsers ? fetchOptionalJson("/api/notification-users", []) : [],
     fetchOptionalJson("/api/roles", []),
   ]);
   state.definitions = await defsRes.json();
@@ -1066,6 +1123,7 @@ async function loadReferenceData() {
   renderNotificationOptions();
   renderPendingReminderTable();
   renderUserDirectories();
+  applyPermissionVisibility();
 }
 
 async function loadContractsList() {
@@ -2478,9 +2536,15 @@ function applyProfitCenterGroupsToCenters() {
 
 function renderUserDirectories() {
   const targets = ["pendingUserDirectory", "taskUserDirectory"];
+  const canView = hasPermission("user_directory_view");
+  const canManage = hasPermission("user_directory_manage");
   targets.forEach((targetId) => {
     const container = $(targetId);
     if (!container) return;
+    if (!canView) {
+      container.innerHTML = `<div class="muted small">You do not have access to the user directory.</div>`;
+      return;
+    }
     if (!state.notificationUsers.length) {
       container.innerHTML = `<div class="muted small">No users added yet.</div>`;
       return;
@@ -2491,9 +2555,13 @@ function renderUserDirectories() {
         <div class="folder-card">
           <div class="folder-header">
             <div class="folder-title">${escapeHtml(user.name)}</div>
-            <button class="link-button" data-remove-user="${user.id}" data-remove-email="${escapeHtml(
-          user.email,
-        )}">Remove</button>
+            ${
+              canManage
+                ? `<button class="link-button" data-remove-user="${user.id}" data-remove-email="${escapeHtml(
+                    user.email,
+                  )}">Remove</button>`
+                : ""
+            }
           </div>
           <div class="folder-body small">${escapeHtml(user.email)}</div>
         </div>
@@ -2505,26 +2573,28 @@ function renderUserDirectories() {
   targets.forEach((targetId) => {
     const container = $(targetId);
     if (!container) return;
-    container.querySelectorAll("button[data-remove-user]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const userId = Number.parseInt(btn.dataset.removeUser, 10);
-        const email = btn.dataset.removeEmail;
-        const user = state.notificationUsers.find((entry) => entry.id === userId);
-        if (!user) {
-          return;
-        }
-        try {
-          await deleteNotificationUser(userId);
-          state.notificationUsers = state.notificationUsers.filter((entry) => entry.id !== userId);
-          renderUserDirectories();
-          renderNotificationOptions();
-        } catch (err) {
-          await showAlert(`Unable to remove ${email}. ${err.message}`, {
-            title: "Remove failed",
-          });
-        }
+    if (canManage) {
+      container.querySelectorAll("button[data-remove-user]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const userId = Number.parseInt(btn.dataset.removeUser, 10);
+          const email = btn.dataset.removeEmail;
+          const user = state.notificationUsers.find((entry) => entry.id === userId);
+          if (!user) {
+            return;
+          }
+          try {
+            await deleteNotificationUser(userId);
+            state.notificationUsers = state.notificationUsers.filter((entry) => entry.id !== userId);
+            renderUserDirectories();
+            renderNotificationOptions();
+          } catch (err) {
+            await showAlert(`Unable to remove ${email}. ${err.message}`, {
+              title: "Remove failed",
+            });
+          }
+        });
       });
-    });
+    }
   });
 }
 
@@ -2810,6 +2880,65 @@ function renderAdminTagPermissions() {
   });
 }
 
+function renderAdminPermissionMatrix() {
+  const tbody = $("adminPermissionMatrixTable");
+  if (!tbody) return;
+  if (!state.permissionDefinitions.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted small">No permissions configured yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.permissionDefinitions
+    .map((permission) => {
+      const assigned = new Set(
+        (state.permissionAssignments[permission.key] || []).map((value) => String(value)),
+      );
+      const rolesHtml = state.roles.length
+        ? state.roles
+            .map((role) => {
+              const checked = assigned.has(String(role.id));
+              return `
+                <label class="inline small" style="gap:6px;">
+                  <input type="checkbox" value="${role.id}" ${checked ? "checked" : ""} />
+                  <span>${escapeHtml(role.name || "")}</span>
+                </label>
+              `;
+            })
+            .join("")
+        : `<div class="muted small">No roles available.</div>`;
+      const defaultNote = permission.default_allow
+        ? "Default: open when no roles are assigned."
+        : "Default: restricted to admins only.";
+      return `
+        <tr>
+          <td>${escapeHtml(permission.label || permission.key)}</td>
+          <td>
+            <div>${escapeHtml(permission.description || "")}</div>
+            <div class="muted small">${escapeHtml(defaultNote)}</div>
+          </td>
+          <td><div id="permRoles-${permission.key}" class="row wrap">${rolesHtml}</div></td>
+          <td><button class="small admin-permission-save" data-permission-key="${permission.key}">Save</button></td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  document.querySelectorAll(".admin-permission-save").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const permissionKey = btn.dataset.permissionKey;
+      const roles = getCheckedValues(`permRoles-${permissionKey}`).map((value) => Number(value));
+      await updatePermissionMatrix(permissionKey, roles);
+      state.permissionAssignments[permissionKey] = roles;
+      const status = $("adminPermissionStatus");
+      if (status) status.textContent = "Permissions saved.";
+      setTimeout(() => {
+        if (status && status.textContent === "Permissions saved.") {
+          status.textContent = "";
+        }
+      }, 2000);
+    });
+  });
+}
+
 function renderAdminAgreementTypes() {
   const tbody = $("adminAgreementTypesTable");
   if (!tbody) return;
@@ -2904,20 +3033,31 @@ async function loadAgreementTypeCatalog() {
 }
 
 async function loadAdminData() {
-  const [users, roles, tags, permissions, agreementTypes, profitCenters, newUserNotification] =
-    await Promise.all([
-      fetchAdminUsers(),
-      apiFetch("/api/roles").then((res) => res.json()),
-      apiFetch("/api/tags").then((res) => res.json()),
-      fetchTagPermissions(),
-      fetchAgreementTypeKeywords(),
-      fetchProfitCenters(),
-      fetchNewUserNotificationEmail(),
-    ]);
+  const [
+    users,
+    roles,
+    tags,
+    permissions,
+    permissionMatrix,
+    agreementTypes,
+    profitCenters,
+    newUserNotification,
+  ] = await Promise.all([
+    fetchAdminUsers(),
+    apiFetch("/api/roles").then((res) => res.json()),
+    apiFetch("/api/tags").then((res) => res.json()),
+    fetchTagPermissions(),
+    fetchPermissionMatrix(),
+    fetchAgreementTypeKeywords(),
+    fetchProfitCenters(),
+    fetchNewUserNotificationEmail(),
+  ]);
   state.adminUsers = users;
   state.roles = roles;
   state.tags = tags;
   state.tagPermissions = permissions || {};
+  state.permissionDefinitions = permissionMatrix?.permissions || [];
+  state.permissionAssignments = permissionMatrix?.assignments || {};
   state.agreementTypeCatalog = agreementTypes || [];
   state.agreementTypes = state.agreementTypeCatalog.map((entry) => entry.name);
   state.profitCenters = profitCenters || [];
@@ -2926,6 +3066,7 @@ async function loadAdminData() {
   renderAdminUsers();
   renderAdminRoles();
   renderAdminTagPermissions();
+  renderAdminPermissionMatrix();
   renderAdminAgreementTypes();
   renderAdminProfitCenters();
   resetAdminUserForm();
@@ -3118,6 +3259,13 @@ function updatePendingAgreementsMeta() {
 
 async function loadPendingAgreements({ reset = false } = {}) {
   const table = $("pendingAgreementsTable");
+  if (!hasPermission("pending_agreements_view")) {
+    if (table) {
+      table.innerHTML = `<tr><td colspan="7" class="muted">You do not have access to pending agreements.</td></tr>`;
+    }
+    state.pendingAgreementsHasMore = false;
+    return;
+  }
   if (reset && table) {
     table.innerHTML = `<tr><td colspan="7" class="muted">Loading…</td></tr>`;
   }
@@ -3150,6 +3298,12 @@ async function loadPendingAgreements({ reset = false } = {}) {
 
 async function loadPendingAgreementReminders() {
   const table = $("pendingReminderTable");
+  if (!hasPermission("pending_agreement_reminders_manage")) {
+    if (table) {
+      table.innerHTML = `<tr><td colspan="5" class="muted">You do not have access to reminder rules.</td></tr>`;
+    }
+    return;
+  }
   if (table) {
     table.innerHTML = `<tr><td colspan="5" class="muted">Loading…</td></tr>`;
   }
@@ -3183,6 +3337,13 @@ function updateTasksMeta() {
 
 async function loadTasks({ reset = false } = {}) {
   const table = $("taskTable");
+  if (!hasPermission("tasks_view")) {
+    if (table) {
+      table.innerHTML = `<tr><td colspan="6" class="muted">You do not have access to tasks.</td></tr>`;
+    }
+    state.tasksHasMore = false;
+    return;
+  }
   if (reset && table) {
     table.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
   }
@@ -3216,6 +3377,10 @@ async function loadTasks({ reset = false } = {}) {
 function renderPendingReminderTable() {
   const table = $("pendingReminderTable");
   if (!table) return;
+  if (!hasPermission("pending_agreement_reminders_manage")) {
+    table.innerHTML = `<tr><td colspan="5" class="muted">You do not have access to reminder rules.</td></tr>`;
+    return;
+  }
   if (!state.pendingAgreementReminders.length) {
     table.innerHTML = `<tr><td colspan="5" class="muted">No reminder rules saved yet.</td></tr>`;
     return;
@@ -3280,10 +3445,15 @@ function renderPendingReminderTable() {
 function renderPendingAgreementsQueue() {
   const table = $("pendingAgreementsTable");
   if (!table) return;
+  if (!hasPermission("pending_agreements_view")) {
+    table.innerHTML = `<tr><td colspan="7" class="muted">You do not have access to pending agreements.</td></tr>`;
+    return;
+  }
   if (!state.pendingAgreements.length) {
     table.innerHTML = `<tr><td colspan="7" class="muted">No pending agreements right now.</td></tr>`;
     return;
   }
+  const canManage = hasPermission("pending_agreements_manage");
   const formatOwner = (agreement) => {
     if (agreement.owner_email) {
       return `${agreement.owner} (${agreement.owner_email})`;
@@ -3311,17 +3481,26 @@ function renderPendingAgreementsQueue() {
           <td>${escapeHtml(agreement.status || "")}</td>
           <td>${escapeHtml(formatDate(agreement.created_at))}</td>
           <td>
-            <button data-nudge-agreement="${agreement.id}">Nudge</button>
-            <button data-approve-agreement="${agreement.id}">Approve</button>
-            <button data-deny-agreement="${agreement.id}">Deny</button>
-            <button data-edit-agreement="${agreement.id}">Edit</button>
-            <button data-remove-agreement="${agreement.id}">Remove</button>
+            ${
+              canManage
+                ? `
+                    <button data-nudge-agreement="${agreement.id}">Nudge</button>
+                    <button data-approve-agreement="${agreement.id}">Approve</button>
+                    <button data-deny-agreement="${agreement.id}">Deny</button>
+                    <button data-edit-agreement="${agreement.id}">Edit</button>
+                    <button data-remove-agreement="${agreement.id}">Remove</button>
+                  `
+                : `<span class="muted small">View only</span>`
+            }
           </td>
         </tr>
       `,
     )
     .join("");
 
+  if (!canManage) {
+    return;
+  }
   table.querySelectorAll("button[data-nudge-agreement]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const agreement = state.pendingAgreements.find((item) => item.id === btn.dataset.nudgeAgreement);
@@ -3418,10 +3597,15 @@ function renderPendingAgreementsQueue() {
 function renderTaskTable() {
   const table = $("taskTable");
   if (!table) return;
+  if (!hasPermission("tasks_view")) {
+    table.innerHTML = `<tr><td colspan="6" class="muted">You do not have access to tasks.</td></tr>`;
+    return;
+  }
   if (!state.tasks.length) {
     table.innerHTML = `<tr><td colspan="6" class="muted">No tasks have been created yet.</td></tr>`;
     return;
   }
+  const canManage = hasPermission("tasks_manage");
   const userLookup = new Map(state.notificationUsers.map((user) => [user.email, user.name]));
   table.innerHTML = state.tasks
     .map((task) => {
@@ -3442,14 +3626,23 @@ function renderTaskTable() {
           <td>${escapeHtml(reminders || "None")}</td>
           <td>${escapeHtml(formatDate(task.created_at))}</td>
           <td>
-            <button data-task-nudge="${task.id}">Nudge</button>
-            <button data-task-toggle="${task.id}">${task.completed ? "Reopen" : "Complete"}</button>
+            ${
+              canManage
+                ? `
+                    <button data-task-nudge="${task.id}">Nudge</button>
+                    <button data-task-toggle="${task.id}">${task.completed ? "Reopen" : "Complete"}</button>
+                  `
+                : `<span class="muted small">View only</span>`
+            }
           </td>
         </tr>
       `;
     })
     .join("");
 
+  if (!canManage) {
+    return;
+  }
   table.querySelectorAll("button[data-task-nudge]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const task = state.tasks.find((item) => item.id === btn.dataset.taskNudge);
@@ -3616,7 +3809,13 @@ function initPendingAgreementsUi() {
     }
   });
 
-  $("pendingAgreementsAdd")?.addEventListener("click", () => openPendingAgreementCreateModal());
+  $("pendingAgreementsAdd")?.addEventListener("click", () => {
+    if (!hasPermission("pending_agreements_manage")) {
+      showToast("You do not have permission to add pending agreements.", { variant: "warning" });
+      return;
+    }
+    openPendingAgreementCreateModal();
+  });
   $("pendingAgreementsQueueExpand")?.addEventListener("click", () => toggleQueueExpanded("pendingAgreements"));
   $("pendingAgreementsLoadMore")?.addEventListener("click", async () => {
     await loadPendingAgreements();
@@ -3642,6 +3841,12 @@ function initPendingAgreementsUi() {
   });
 
   $("pendingReminderSave")?.addEventListener("click", async () => {
+    if (!hasPermission("pending_agreement_reminders_manage")) {
+      await showAlert("You do not have permission to manage reminders.", {
+        title: "Access denied",
+      });
+      return;
+    }
     const frequency = $("pendingReminderFrequency")?.value || "weekly";
     const roles = getCheckedValues("pendingRoleOptions")
       .map((value) => Number.parseInt(value, 10))
@@ -3673,6 +3878,12 @@ function initPendingAgreementsUi() {
   });
 
   $("pendingUserAdd")?.addEventListener("click", async () => {
+    if (!hasPermission("user_directory_manage")) {
+      await showAlert("You do not have permission to manage the user directory.", {
+        title: "Access denied",
+      });
+      return;
+    }
     const name = $("pendingUserName")?.value?.trim();
     const email = $("pendingUserEmail")?.value?.trim();
     if (!name || !email) {
@@ -3732,6 +3943,10 @@ function initTasksUi() {
   });
 
   $("taskCreate")?.addEventListener("click", async () => {
+    if (!hasPermission("tasks_manage")) {
+      await showAlert("You do not have permission to manage tasks.", { title: "Access denied" });
+      return;
+    }
     const title = $("taskTitle")?.value?.trim();
     const description = $("taskDescription")?.value?.trim();
     const dueDate = $("taskDueDate")?.value;
@@ -3766,6 +3981,12 @@ function initTasksUi() {
   });
 
   $("taskUserAdd")?.addEventListener("click", async () => {
+    if (!hasPermission("user_directory_manage")) {
+      await showAlert("You do not have permission to manage the user directory.", {
+        title: "Access denied",
+      });
+      return;
+    }
     const name = $("taskUserName")?.value?.trim();
     const email = $("taskUserEmail")?.value?.trim();
     if (!name || !email) {
@@ -3997,6 +4218,14 @@ function initNotificationsUi() {
 }
 
 function showPage(page) {
+  if (page === "pendingAgreements" && !hasPermission("pending_agreements_view")) {
+    showToast("You do not have access to Pending Agreements.", { variant: "warning" });
+    return;
+  }
+  if (page === "tasks" && !hasPermission("tasks_view")) {
+    showToast("You do not have access to Tasks.", { variant: "warning" });
+    return;
+  }
   const pages = [
     "contracts",
     "allContracts",

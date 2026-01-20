@@ -290,6 +290,125 @@ def _validate_role_ids(conn: sqlite3.Connection, role_ids: List[int]) -> List[in
     return unique_ids
 
 
+def _permission_definition_map() -> Dict[str, Dict[str, Any]]:
+    return {perm["key"]: perm for perm in PERMISSION_DEFINITIONS}
+
+
+def _permission_default_allow(permission_key: str) -> bool:
+    definition = _permission_definition_map().get(permission_key)
+    return bool(definition and definition.get("default_allow"))
+
+
+def _ensure_permission_defaults(conn: sqlite3.Connection) -> None:
+    role_row = conn.execute(
+        "SELECT id FROM auth_roles WHERE name = ?",
+        ("admin",),
+    ).fetchone()
+    if not role_row:
+        return
+    admin_role_id = role_row["id"]
+    for permission in PERMISSION_DEFINITIONS:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO role_permissions (permission_key, role_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (permission["key"], admin_role_id, now_iso()),
+        )
+
+
+def _get_permission_assignments(conn: sqlite3.Connection) -> Dict[str, List[int]]:
+    rows = conn.execute(
+        "SELECT permission_key, role_id FROM role_permissions"
+    ).fetchall()
+    assignments = {perm["key"]: [] for perm in PERMISSION_DEFINITIONS}
+    for row in rows:
+        assignments.setdefault(row["permission_key"], []).append(row["role_id"])
+    return assignments
+
+
+def _is_admin_user(user: Optional[Dict[str, Any]]) -> bool:
+    if not user:
+        return False
+    return bool(user.get("is_admin")) or "admin" in user.get("roles", [])
+
+
+def _user_has_permission(
+    conn: sqlite3.Connection,
+    user: Optional[Dict[str, Any]],
+    permission_key: str,
+) -> bool:
+    if not AUTH_REQUIRED:
+        return True
+    if _is_admin_user(user):
+        return True
+    if not user:
+        return False
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM role_permissions rp
+        JOIN auth_user_roles ur ON ur.role_id = rp.role_id
+        WHERE ur.user_id = ? AND rp.permission_key = ?
+        LIMIT 1
+        """,
+        (user["id"], permission_key),
+    ).fetchone()
+    if row:
+        return True
+    assignments = _get_permission_assignments(conn)
+    if not assignments.get(permission_key) and _permission_default_allow(permission_key):
+        return True
+    return False
+
+
+def _require_permission(
+    conn: sqlite3.Connection,
+    user: Optional[Dict[str, Any]],
+    permission_key: str,
+) -> None:
+    if not _user_has_permission(conn, user, permission_key):
+        raise HTTPException(status_code=403, detail="Permission required")
+
+
+def _get_user_permission_keys(
+    conn: sqlite3.Connection, user: Optional[Dict[str, Any]]
+) -> List[str]:
+    if not AUTH_REQUIRED:
+        return [perm["key"] for perm in PERMISSION_DEFINITIONS]
+    if _is_admin_user(user):
+        return [perm["key"] for perm in PERMISSION_DEFINITIONS]
+    if not user:
+        return []
+    role_rows = conn.execute(
+        "SELECT role_id FROM auth_user_roles WHERE user_id = ?",
+        (user["id"],),
+    ).fetchall()
+    role_ids = {row["role_id"] for row in role_rows}
+    if not role_ids:
+        role_ids = set()
+    rows = []
+    if role_ids:
+        placeholders = ",".join("?" for _ in role_ids)
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT permission_key
+            FROM role_permissions
+            WHERE role_id IN ({placeholders})
+            """,
+            tuple(role_ids),
+        ).fetchall()
+    assigned = {row["permission_key"] for row in rows}
+    assignments = _get_permission_assignments(conn)
+    for permission in PERMISSION_DEFINITIONS:
+        key = permission["key"]
+        if key in assigned:
+            continue
+        if not assignments.get(key) and permission.get("default_allow"):
+            assigned.add(key)
+    return sorted(assigned)
+
+
 def _validate_profit_center_ids(conn: sqlite3.Connection, profit_center_ids: List[int]) -> List[int]:
     if not profit_center_ids:
         return []
@@ -642,6 +761,51 @@ DEFAULT_PROFIT_CENTERS = [
     {"group": "Family Office", "code": "MISC.", "name": "MISC."},
 ]
 
+PERMISSION_DEFINITIONS = [
+    {
+        "key": "pending_agreements_view",
+        "label": "Pending agreements: view queue",
+        "description": "View pending agreements tied to contracts you can access.",
+        "default_allow": False,
+    },
+    {
+        "key": "pending_agreements_manage",
+        "label": "Pending agreements: manage queue",
+        "description": "Add, edit, approve, deny, nudge, or remove pending agreements.",
+        "default_allow": False,
+    },
+    {
+        "key": "pending_agreement_reminders_manage",
+        "label": "Pending agreements: manage reminders",
+        "description": "Create and edit recurring reminder rules and recipients.",
+        "default_allow": False,
+    },
+    {
+        "key": "tasks_view",
+        "label": "Tasks: view queue",
+        "description": "View task queue items.",
+        "default_allow": True,
+    },
+    {
+        "key": "tasks_manage",
+        "label": "Tasks: manage tasks",
+        "description": "Create tasks, nudge assignees, or update task status.",
+        "default_allow": True,
+    },
+    {
+        "key": "user_directory_view",
+        "label": "User directory: view",
+        "description": "View the shared notification user directory.",
+        "default_allow": False,
+    },
+    {
+        "key": "user_directory_manage",
+        "label": "User directory: manage",
+        "description": "Add or remove users from the shared notification directory.",
+        "default_allow": False,
+    },
+]
+
 
 def _seed_profit_centers(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT COUNT(1) AS count FROM profit_centers").fetchone()
@@ -757,6 +921,21 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_tag_roles_role ON tag_roles(role_id);
             """
         )
+
+    if not has_table("role_permissions"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS role_permissions (
+              permission_key TEXT NOT NULL,
+              role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (permission_key, role_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_role_permissions_key ON role_permissions(permission_key);
+            CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id);
+            """
+        )
+    _ensure_permission_defaults(conn)
 
     if not has_table("agreement_types"):
         conn.executescript(
@@ -1551,6 +1730,24 @@ class TagPermissionUpdate(BaseModel):
         return []
 
 
+class PermissionMatrixUpdate(BaseModel):
+    roles: List[int] = Field(default_factory=list)
+
+    @field_validator("roles", mode="before")
+    def normalize_roles(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            try:
+                return [int(v) for v in cleaned]
+            except ValueError as exc:
+                raise ValueError("role IDs must be integers") from exc
+        return []
+
+
 class PendingAgreementCreate(BaseModel):
     title: str
     owner: str
@@ -1796,6 +1993,15 @@ CREATE TABLE IF NOT EXISTS tag_roles (
 );
 CREATE INDEX IF NOT EXISTS idx_tag_roles_tag ON tag_roles(tag_id);
 CREATE INDEX IF NOT EXISTS idx_tag_roles_role ON tag_roles(role_id);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  permission_key TEXT NOT NULL,
+  role_id INTEGER NOT NULL REFERENCES auth_roles(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (permission_key, role_id)
+);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_key ON role_permissions(permission_key);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id);
 
 CREATE TABLE IF NOT EXISTS tag_keywords (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3158,6 +3364,45 @@ def update_tag_permissions(
         return {"tag_id": tag_id, "role_ids": role_ids}
 
 
+# ----------------------------
+# Permission matrix endpoints
+# ----------------------------
+@app.get("/api/permissions")
+def list_permissions(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        return {
+            "permissions": PERMISSION_DEFINITIONS,
+            "assignments": _get_permission_assignments(conn),
+        }
+
+
+@app.get("/api/permissions/me")
+def list_my_permissions(user: Optional[Dict[str, Any]] = Depends(require_user)):
+    with db() as conn:
+        return {"permissions": _get_user_permission_keys(conn, user)}
+
+
+@app.put("/api/permissions/{permission_key}")
+def update_permission_roles(
+    permission_key: str,
+    payload: PermissionMatrixUpdate,
+    _: Dict[str, Any] = Depends(require_admin),
+):
+    definition_map = _permission_definition_map()
+    if permission_key not in definition_map:
+        raise HTTPException(status_code=404, detail="Permission not found")
+    with db() as conn:
+        role_ids = _validate_role_ids(conn, payload.roles)
+        conn.execute("DELETE FROM role_permissions WHERE permission_key = ?", (permission_key,))
+        if role_ids:
+            now = now_iso()
+            conn.executemany(
+                "INSERT INTO role_permissions (permission_key, role_id, created_at) VALUES (?, ?, ?)",
+                [(permission_key, role_id, now) for role_id in role_ids],
+            )
+        return {"permission_key": permission_key, "role_ids": role_ids}
+
+
 @app.get("/api/action-logs")
 def list_action_logs(
     entity_type: Optional[str] = None,
@@ -3317,8 +3562,9 @@ def oidc_callback(code: str, state: str):
 # Notification users
 # ----------------------------
 @app.get("/api/notification-users")
-def list_notification_users(_: Dict[str, Any] = Depends(require_admin)):
+def list_notification_users(user: Optional[Dict[str, Any]] = Depends(require_user)):
     with db() as conn:
+        _require_permission(conn, user, "user_directory_view")
         rows = conn.execute(
             "SELECT id, name, email FROM notification_users ORDER BY name ASC, email ASC"
         ).fetchall()
@@ -3326,13 +3572,16 @@ def list_notification_users(_: Dict[str, Any] = Depends(require_admin)):
 
 
 @app.post("/api/notification-users")
-def create_notification_user(payload: NotificationUserCreate, _: Dict[str, Any] = Depends(require_admin)):
+def create_notification_user(
+    payload: NotificationUserCreate, user: Optional[Dict[str, Any]] = Depends(require_user)
+):
     name = payload.name.strip()
     email = payload.email.strip().lower()
     if not name or not email:
         raise HTTPException(status_code=400, detail="name and email are required")
 
     with db() as conn:
+        _require_permission(conn, user, "user_directory_manage")
         try:
             cur = conn.execute(
                 """
@@ -3347,8 +3596,9 @@ def create_notification_user(payload: NotificationUserCreate, _: Dict[str, Any] 
 
 
 @app.delete("/api/notification-users/{user_id}")
-def delete_notification_user(user_id: int, _: Dict[str, Any] = Depends(require_admin)):
+def delete_notification_user(user_id: int, user: Optional[Dict[str, Any]] = Depends(require_user)):
     with db() as conn:
+        _require_permission(conn, user, "user_directory_manage")
         row = conn.execute(
             "SELECT id FROM notification_users WHERE id = ?", (user_id,)
         ).fetchone()
@@ -3433,12 +3683,50 @@ def list_notification_logs(
     }
 
 
+def _pending_agreement_visible_to_user(
+    conn: sqlite3.Connection,
+    agreement: Dict[str, Any],
+    user: Optional[Dict[str, Any]],
+    request: Optional[Request],
+) -> bool:
+    if not AUTH_REQUIRED or _is_admin_user(user):
+        return True
+    if not user:
+        return False
+    user_email = (user.get("email") or "").lower()
+    user_name = (user.get("name") or "").lower()
+    owner_email = (agreement.get("owner_email") or "").lower()
+    owner_name = (agreement.get("owner") or "").lower()
+    is_recipient = bool(
+        (user_email and owner_email and owner_email == user_email)
+        or (user_name and owner_name and owner_name == user_name)
+    )
+    if not is_recipient:
+        return False
+    contract_id = agreement.get("contract_id")
+    if not contract_id:
+        return True
+    context = _get_visibility_context(conn, request)
+    if context is None:
+        return True
+    visible_ids = _filter_contract_visibility(
+        conn,
+        [contract_id],
+        context["user_role_ids"],
+        context["user_profit_center_ids"],
+        context["user_profit_center_groups"],
+        context["is_admin"],
+    )
+    return contract_id in visible_ids
+
+
 @app.get("/api/pending-agreements")
 def list_pending_agreements(
+    request: Request,
     limit: int = 20,
     offset: int = 0,
     query: str = "",
-    _: Dict[str, Any] = Depends(require_user),
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     limit = max(1, min(limit, 100))
     offset = max(offset, 0)
@@ -3456,15 +3744,21 @@ def list_pending_agreements(
         params.extend([like, like, like, like, like, like])
 
     with db() as conn:
-        total = conn.execute(
-            f"""
-            SELECT COUNT(1) AS count
-            FROM pending_agreements p
-            LEFT JOIN contracts c ON c.id = p.contract_id
-            {where_clause}
-            """,
-            params,
-        ).fetchone()["count"]
+        _require_permission(conn, user, "pending_agreements_view")
+        is_admin = _is_admin_user(user)
+        if AUTH_REQUIRED and not is_admin:
+            recipient_clause = "(lower(coalesce(p.owner_email, '')) = ? OR lower(coalesce(p.owner, '')) = ?)"
+            if where_clause:
+                where_clause = f"{where_clause} AND {recipient_clause}"
+            else:
+                where_clause = f"WHERE {recipient_clause}"
+            params.extend(
+                [
+                    (user.get("email") or "").lower(),
+                    (user.get("name") or "").lower(),
+                ]
+            )
+
         rows = conn.execute(
             f"""
             SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
@@ -3474,22 +3768,25 @@ def list_pending_agreements(
             LEFT JOIN contracts c ON c.id = p.contract_id
             {where_clause}
             ORDER BY p.created_at DESC
-            LIMIT ? OFFSET ?
             """,
-            (*params, limit, offset),
+            params,
         ).fetchall()
-        return {
-            "items": [dict(r) for r in rows],
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }
+        items = [dict(r) for r in rows]
+        if AUTH_REQUIRED and not is_admin:
+            items = [
+                item
+                for item in items
+                if _pending_agreement_visible_to_user(conn, item, user, request)
+            ]
+        total = len(items)
+        paged = items[offset : offset + limit]
+        return {"items": paged, "total": total, "limit": limit, "offset": offset}
 
 
 @app.post("/api/pending-agreements")
 def create_pending_agreement(
     payload: PendingAgreementCreate,
-    user: Dict[str, Any] = Depends(require_user),
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     title = payload.title.strip()
     owner = payload.owner.strip()
@@ -3505,6 +3802,7 @@ def create_pending_agreement(
     created_at = now_iso()
 
     with db() as conn:
+        _require_permission(conn, user, "pending_agreements_manage")
         if contract_id:
             exists = conn.execute(
                 "SELECT id FROM contracts WHERE id = ?", (contract_id,)
@@ -3553,9 +3851,11 @@ def create_pending_agreement(
 def update_pending_agreement(
     agreement_id: str,
     payload: PendingAgreementUpdate,
-    user: Dict[str, Any] = Depends(require_user),
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     with db() as conn:
+        _require_permission(conn, user, "pending_agreements_manage")
         row = conn.execute(
             """
             SELECT id, title, owner, owner_email, contract_id, due_date, status, created_at
@@ -3565,13 +3865,16 @@ def update_pending_agreement(
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Pending agreement not found")
+        agreement = dict(row)
+        if not _pending_agreement_visible_to_user(conn, agreement, user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
 
-        title = row["title"]
-        owner = row["owner"]
-        owner_email = row["owner_email"]
-        contract_id = row["contract_id"]
-        due_date = row["due_date"]
-        status = row["status"]
+        title = agreement["title"]
+        owner = agreement["owner"]
+        owner_email = agreement["owner_email"]
+        contract_id = agreement["contract_id"]
+        due_date = agreement["due_date"]
+        status = agreement["status"]
 
         if payload.title is not None:
             cleaned = payload.title.strip()
@@ -3640,15 +3943,19 @@ def update_pending_agreement(
 @app.get("/api/pending-agreements/{agreement_id}/notes")
 def list_pending_agreement_notes(
     agreement_id: str,
-    _: Dict[str, Any] = Depends(require_user),
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     with db() as conn:
+        _require_permission(conn, user, "pending_agreements_view")
         row = conn.execute(
-            "SELECT id FROM pending_agreements WHERE id = ?",
+            "SELECT id, owner, owner_email, contract_id FROM pending_agreements WHERE id = ?",
             (agreement_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Pending agreement not found")
+        if not _pending_agreement_visible_to_user(conn, dict(row), user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
         rows = conn.execute(
             """
             SELECT n.id, n.pending_agreement_id, n.note, n.created_at, n.user_id,
@@ -3667,19 +3974,23 @@ def list_pending_agreement_notes(
 def create_pending_agreement_note(
     agreement_id: str,
     payload: NoteCreate,
-    user: Dict[str, Any] = Depends(require_user),
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     note = payload.note.strip()
     if not note:
         raise HTTPException(status_code=400, detail="note is required")
     created_at = now_iso()
     with db() as conn:
+        _require_permission(conn, user, "pending_agreements_manage")
         row = conn.execute(
-            "SELECT id FROM pending_agreements WHERE id = ?",
+            "SELECT id, owner, owner_email, contract_id FROM pending_agreements WHERE id = ?",
             (agreement_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Pending agreement not found")
+        if not _pending_agreement_visible_to_user(conn, dict(row), user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
         cur = conn.execute(
             """
             INSERT INTO agreement_notes (pending_agreement_id, user_id, note, created_at)
@@ -3710,21 +4021,27 @@ def create_pending_agreement_note(
 @app.delete("/api/pending-agreements/{agreement_id}")
 def delete_pending_agreement(
     agreement_id: str,
-    _: Dict[str, Any] = Depends(require_user),
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     with db() as conn:
+        _require_permission(conn, user, "pending_agreements_manage")
         row = conn.execute(
-            "SELECT id FROM pending_agreements WHERE id = ?", (agreement_id,)
+            "SELECT id, owner, owner_email, contract_id FROM pending_agreements WHERE id = ?",
+            (agreement_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Pending agreement not found")
+        if not _pending_agreement_visible_to_user(conn, dict(row), user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
         conn.execute("DELETE FROM pending_agreements WHERE id = ?", (agreement_id,))
         return {"deleted": agreement_id}
 
 
 @app.get("/api/pending-agreement-reminders")
-def list_pending_agreement_reminders(_: Dict[str, Any] = Depends(require_admin)):
+def list_pending_agreement_reminders(user: Optional[Dict[str, Any]] = Depends(require_user)):
     with db() as conn:
+        _require_permission(conn, user, "pending_agreement_reminders_manage")
         rows = conn.execute(
             """
             SELECT id, frequency, roles_json, recipients_json, message, created_at, updated_at
@@ -3744,7 +4061,7 @@ def list_pending_agreement_reminders(_: Dict[str, Any] = Depends(require_admin))
 @app.post("/api/pending-agreement-reminders")
 def create_pending_agreement_reminder(
     payload: PendingAgreementReminderCreate,
-    _: Dict[str, Any] = Depends(require_admin),
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     if not payload.roles and not payload.recipients:
         raise HTTPException(
@@ -3754,6 +4071,7 @@ def create_pending_agreement_reminder(
     reminder_id = str(uuid.uuid4())
     created_at = now_iso()
     with db() as conn:
+        _require_permission(conn, user, "pending_agreement_reminders_manage")
         role_ids = _validate_role_ids(conn, payload.roles)
         conn.execute(
             """
@@ -3786,9 +4104,10 @@ def create_pending_agreement_reminder(
 def update_pending_agreement_reminder(
     reminder_id: str,
     payload: PendingAgreementReminderUpdate,
-    _: Dict[str, Any] = Depends(require_admin),
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     with db() as conn:
+        _require_permission(conn, user, "pending_agreement_reminders_manage")
         row = conn.execute(
             """
             SELECT id, frequency, roles_json, recipients_json, message, created_at, updated_at
@@ -3850,9 +4169,10 @@ def update_pending_agreement_reminder(
 @app.delete("/api/pending-agreement-reminders/{reminder_id}")
 def delete_pending_agreement_reminder(
     reminder_id: str,
-    _: Dict[str, Any] = Depends(require_admin),
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     with db() as conn:
+        _require_permission(conn, user, "pending_agreement_reminders_manage")
         row = conn.execute(
             "SELECT id FROM pending_agreement_reminders WHERE id = ?",
             (reminder_id,),
@@ -3868,6 +4188,7 @@ def list_tasks(
     limit: int = 20,
     offset: int = 0,
     query: str = "",
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     limit = max(1, min(limit, 100))
     offset = max(offset, 0)
@@ -3882,10 +4203,9 @@ def list_tasks(
         params.extend([like, like, like])
 
     with db() as conn:
-        total = conn.execute(
-            f"SELECT COUNT(1) AS count FROM tasks {where_clause}",
-            params,
-        ).fetchone()["count"]
+        _require_permission(conn, user, "tasks_view")
+        can_manage = _user_has_permission(conn, user, "tasks_manage")
+        is_admin = _is_admin_user(user)
         rows = conn.execute(
             f"""
             SELECT id, title, description, due_date, recurrence, reminders_json, assignees_json,
@@ -3893,27 +4213,28 @@ def list_tasks(
             FROM tasks
             {where_clause}
             ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
             """,
-            (*params, limit, offset),
+            params,
         ).fetchall()
         items = []
+        user_email = (user.get("email") or "").lower() if user else ""
         for row in rows:
             data = dict(row)
             data["reminders"] = safe_json_list(data.pop("reminders_json", None))
             data["assignees"] = safe_json_list(data.pop("assignees_json", None))
             data["completed"] = bool(data.get("completed"))
+            if AUTH_REQUIRED and not is_admin and not can_manage:
+                assignee_emails = [str(a).lower() for a in data["assignees"]]
+                if not user_email or user_email not in assignee_emails:
+                    continue
             items.append(data)
-        return {
-            "items": items,
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }
+        total = len(items)
+        paged = items[offset : offset + limit]
+        return {"items": paged, "total": total, "limit": limit, "offset": offset}
 
 
 @app.post("/api/tasks")
-def create_task(payload: TaskCreate):
+def create_task(payload: TaskCreate, user: Optional[Dict[str, Any]] = Depends(require_user)):
     title = payload.title.strip()
     due_date = payload.due_date.strip()
     if not title or not due_date:
@@ -3926,6 +4247,7 @@ def create_task(payload: TaskCreate):
     assignees_json = json.dumps(payload.assignees or [])
 
     with db() as conn:
+        _require_permission(conn, user, "tasks_manage")
         conn.execute(
             """
             INSERT INTO tasks (id, title, description, due_date, recurrence, reminders_json,
@@ -3957,8 +4279,11 @@ def create_task(payload: TaskCreate):
 
 
 @app.patch("/api/tasks/{task_id}")
-def update_task_status(task_id: str, payload: TaskStatusUpdate):
+def update_task_status(
+    task_id: str, payload: TaskStatusUpdate, user: Optional[Dict[str, Any]] = Depends(require_user)
+):
     with db() as conn:
+        _require_permission(conn, user, "tasks_manage")
         row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -5811,8 +6136,13 @@ def send_pending_agreement_reminders(date_str: Optional[str] = None):
 
 
 @app.post("/api/pending-agreements/{agreement_id}/nudge")
-def nudge_pending_agreement(agreement_id: str):
+def nudge_pending_agreement(
+    agreement_id: str,
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
+):
     with db() as conn:
+        _require_permission(conn, user, "pending_agreements_manage")
         agreement = conn.execute(
             """
             SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
@@ -5826,6 +6156,8 @@ def nudge_pending_agreement(agreement_id: str):
         ).fetchone()
         if not agreement:
             raise HTTPException(status_code=404, detail="Pending agreement not found")
+        if not _pending_agreement_visible_to_user(conn, dict(agreement), user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
         recipient = _resolve_pending_agreement_recipient(conn, agreement)
         if not recipient:
             raise HTTPException(
@@ -5857,6 +6189,7 @@ def action_pending_agreement(
     agreement_id: str,
     payload: PendingAgreementAction,
     request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     action = payload.action
     if action not in {"approve", "deny"}:
@@ -5864,6 +6197,7 @@ def action_pending_agreement(
     action_label = "Approved" if action == "approve" else "Denied"
 
     with db() as conn:
+        _require_permission(conn, user, "pending_agreements_manage")
         agreement = conn.execute(
             """
             SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
@@ -5877,11 +6211,12 @@ def action_pending_agreement(
         ).fetchone()
         if not agreement:
             raise HTTPException(status_code=404, detail="Pending agreement not found")
+        if not _pending_agreement_visible_to_user(conn, dict(agreement), user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
         conn.execute(
             "UPDATE pending_agreements SET status = ? WHERE id = ?",
             (action_label, agreement_id),
         )
-        user = get_current_user(request)
         _log_action(
             conn,
             user,
@@ -5923,8 +6258,9 @@ def action_pending_agreement(
 
 
 @app.post("/api/tasks/{task_id}/nudge")
-def nudge_task(task_id: str):
+def nudge_task(task_id: str, user: Optional[Dict[str, Any]] = Depends(require_user)):
     with db() as conn:
+        _require_permission(conn, user, "tasks_manage")
         task = conn.execute(
             """
             SELECT id, title, description, due_date, reminders_json, assignees_json, completed, created_at
