@@ -3726,6 +3726,7 @@ def list_pending_agreements(
     limit: int = 20,
     offset: int = 0,
     query: str = "",
+    request: Request,
     user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     limit = max(1, min(limit, 100))
