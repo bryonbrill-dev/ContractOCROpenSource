@@ -8,3 +8,4 @@ pdf2image
 python-dateutil
 python-dotenv
 pyjwt[crypto]
+httpx

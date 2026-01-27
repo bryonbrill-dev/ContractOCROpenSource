@@ -355,11 +355,49 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
   contract_id   TEXT,
   due_date      TEXT,
   status        TEXT,
-  created_at    TEXT NOT NULL
+  internal_company TEXT,
+  team_member   TEXT,
+  requester_email TEXT,
+  attorney_assigned TEXT,
+  matter        TEXT,
+  status_notes  TEXT,
+  internal_completion_date TEXT,
+  fully_executed_date TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
   ON pending_agreements(created_at);
+
+CREATE TABLE IF NOT EXISTS pending_agreement_files (
+  id                   TEXT PRIMARY KEY,
+  pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+  file_name            TEXT NOT NULL,
+  stored_path          TEXT NOT NULL,
+  mime_type            TEXT NOT NULL,
+  file_type            TEXT NOT NULL,
+  uploaded_by          INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+  uploaded_at          TEXT NOT NULL,
+  sha256               TEXT NOT NULL,
+  size_bytes           INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_agreement
+  ON pending_agreement_files(pending_agreement_id);
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_type
+  ON pending_agreement_files(file_type);
+
+CREATE TABLE IF NOT EXISTS pending_agreement_notes (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+  created_by           INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+  note_text            TEXT NOT NULL,
+  created_at           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_notes_agreement
+  ON pending_agreement_notes(pending_agreement_id);
 
 -- =========================
 -- Pending agreement reminder rules

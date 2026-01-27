@@ -18,9 +18,10 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, date, timedelta
 from email.message import EmailMessage
+from email.utils import parseaddr
 from typing import Optional, List, Literal, Dict, Any, Set
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Response
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -406,6 +407,8 @@ def _get_user_permission_keys(
             continue
         if not assignments.get(key) and permission.get("default_allow"):
             assigned.add(key)
+    if user:
+        assigned.add("pending_agreements_view")
     return sorted(assigned)
 
 
@@ -765,13 +768,13 @@ PERMISSION_DEFINITIONS = [
     {
         "key": "pending_agreements_view",
         "label": "Pending agreements: view queue",
-        "description": "View pending agreements tied to contracts you can access.",
+        "description": "View pending agreements (requesters see their own submissions).",
         "default_allow": False,
     },
     {
         "key": "pending_agreements_manage",
         "label": "Pending agreements: manage queue",
-        "description": "Add, edit, approve, deny, nudge, or remove pending agreements.",
+        "description": "Add, edit, and complete pending agreements (legal/admin view).",
         "default_allow": False,
     },
     {
@@ -936,6 +939,18 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             """
         )
     _ensure_permission_defaults(conn)
+
+    if has_table("app_settings"):
+        pending_setting = conn.execute(
+            "SELECT key FROM app_settings WHERE key = ?",
+            (PENDING_AGREEMENT_RECIPIENTS_SETTING_KEY,),
+        ).fetchone()
+        if not pending_setting:
+            _upsert_app_setting(
+                conn,
+                PENDING_AGREEMENT_RECIPIENTS_SETTING_KEY,
+                json.dumps(DEFAULT_PENDING_AGREEMENT_RECIPIENTS),
+            )
 
     if not has_table("agreement_types"):
         conn.executescript(
@@ -1138,6 +1153,24 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 now,
             ),
         )
+    existing_pending_setting = conn.execute(
+        "SELECT key FROM app_settings WHERE key = ?",
+        (PENDING_AGREEMENT_RECIPIENTS_SETTING_KEY,),
+    ).fetchone()
+    if not existing_pending_setting:
+        now = now_iso()
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                PENDING_AGREEMENT_RECIPIENTS_SETTING_KEY,
+                json.dumps(DEFAULT_PENDING_AGREEMENT_RECIPIENTS),
+                now,
+                now,
+            ),
+        )
 
     conn.executescript(
         """
@@ -1263,7 +1296,16 @@ CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expi
               contract_id TEXT,
               due_date TEXT,
               status TEXT,
-              created_at TEXT NOT NULL
+              internal_company TEXT,
+              team_member TEXT,
+              requester_email TEXT,
+              attorney_assigned TEXT,
+              matter TEXT,
+              status_notes TEXT,
+              internal_completion_date TEXT,
+              fully_executed_date TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
               ON pending_agreements(created_at);
@@ -1274,6 +1316,24 @@ CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expi
             conn.execute("ALTER TABLE pending_agreements ADD COLUMN owner_email TEXT")
         if not has_column("pending_agreements", "contract_id"):
             conn.execute("ALTER TABLE pending_agreements ADD COLUMN contract_id TEXT")
+        if not has_column("pending_agreements", "internal_company"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN internal_company TEXT")
+        if not has_column("pending_agreements", "team_member"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN team_member TEXT")
+        if not has_column("pending_agreements", "requester_email"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN requester_email TEXT")
+        if not has_column("pending_agreements", "attorney_assigned"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN attorney_assigned TEXT")
+        if not has_column("pending_agreements", "matter"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN matter TEXT")
+        if not has_column("pending_agreements", "status_notes"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN status_notes TEXT")
+        if not has_column("pending_agreements", "internal_completion_date"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN internal_completion_date TEXT")
+        if not has_column("pending_agreements", "fully_executed_date"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN fully_executed_date TEXT")
+        if not has_column("pending_agreements", "updated_at"):
+            conn.execute("ALTER TABLE pending_agreements ADD COLUMN updated_at TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pending_agreements_contract_id ON pending_agreements(contract_id)"
         )
@@ -1298,6 +1358,51 @@ CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expi
             """
         )
 
+    if not has_table("pending_agreement_files"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pending_agreement_files (
+              id TEXT PRIMARY KEY,
+              pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+              file_name TEXT NOT NULL,
+              stored_path TEXT NOT NULL,
+              mime_type TEXT NOT NULL,
+              file_type TEXT NOT NULL,
+              uploaded_by INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+              uploaded_at TEXT NOT NULL,
+              sha256 TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_agreement
+              ON pending_agreement_files(pending_agreement_id);
+            CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_type
+              ON pending_agreement_files(file_type);
+            """
+        )
+
+    if not has_table("pending_agreement_notes"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pending_agreement_notes (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+              created_by INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+              note_text TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_agreement_notes_agreement
+              ON pending_agreement_notes(pending_agreement_id);
+            """
+        )
+        if has_table("agreement_notes"):
+            conn.execute(
+                """
+                INSERT INTO pending_agreement_notes (pending_agreement_id, created_by, note_text, created_at)
+                SELECT pending_agreement_id, user_id, note, created_at
+                FROM agreement_notes
+                """
+            )
+
     if not has_table("tasks"):
         conn.executescript(
             """
@@ -1318,6 +1423,51 @@ CREATE INDEX IF NOT EXISTS idx_auth_oidc_states_expires ON auth_oidc_states(expi
               ON tasks(completed);
             """
         )
+
+    if not has_table("pending_agreement_files"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pending_agreement_files (
+              id TEXT PRIMARY KEY,
+              pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+              file_name TEXT NOT NULL,
+              stored_path TEXT NOT NULL,
+              mime_type TEXT NOT NULL,
+              file_type TEXT NOT NULL,
+              uploaded_by INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+              uploaded_at TEXT NOT NULL,
+              sha256 TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_agreement
+              ON pending_agreement_files(pending_agreement_id);
+            CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_type
+              ON pending_agreement_files(file_type);
+            """
+        )
+
+    if not has_table("pending_agreement_notes"):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pending_agreement_notes (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+              created_by INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+              note_text TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_agreement_notes_agreement
+              ON pending_agreement_notes(pending_agreement_id);
+            """
+        )
+        if has_table("agreement_notes"):
+            conn.execute(
+                """
+                INSERT INTO pending_agreement_notes (pending_agreement_id, created_by, note_text, created_at)
+                SELECT pending_agreement_id, user_id, note, created_at
+                FROM agreement_notes
+                """
+            )
 
 
 def _get_app_setting(
@@ -1346,6 +1496,48 @@ def _get_new_user_notification_email(conn: sqlite3.Connection) -> str:
         conn, NEW_USER_NOTIFICATION_EMAIL_SETTING_KEY, DEFAULT_NEW_USER_NOTIFICATION_EMAIL
     )
     return str(email or DEFAULT_NEW_USER_NOTIFICATION_EMAIL).strip().lower()
+
+
+def _normalize_pending_agreement_recipients(
+    values: List[Dict[str, Any]] | List[str],
+) -> List[Dict[str, str]]:
+    recipients: List[Dict[str, str]] = []
+    for value in values:
+        name = ""
+        email = ""
+        if isinstance(value, dict):
+            name = str(value.get("name") or "").strip()
+            email = str(value.get("email") or "").strip().lower()
+        else:
+            parsed_name, parsed_email = parseaddr(str(value))
+            name = (parsed_name or "").strip()
+            email = (parsed_email or "").strip().lower()
+        if not email or "@" not in email:
+            continue
+        if not name:
+            name = email
+        recipients.append({"name": name, "email": email})
+    deduped: Dict[str, Dict[str, str]] = {}
+    for entry in recipients:
+        deduped.setdefault(entry["email"], entry)
+    return list(deduped.values())
+
+
+def _get_pending_agreement_recipients(conn: sqlite3.Connection) -> List[Dict[str, str]]:
+    raw = _get_app_setting(conn, PENDING_AGREEMENT_RECIPIENTS_SETTING_KEY)
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return _normalize_pending_agreement_recipients(parsed)
+        except json.JSONDecodeError:
+            pass
+    return _normalize_pending_agreement_recipients(DEFAULT_PENDING_AGREEMENT_RECIPIENTS)
+
+
+def _get_pending_agreement_recipient_emails(conn: sqlite3.Connection) -> List[str]:
+    recipients = _get_pending_agreement_recipients(conn)
+    return [entry["email"] for entry in recipients]
 
 
 def _format_new_user_notification_body(
@@ -1749,16 +1941,40 @@ class PermissionMatrixUpdate(BaseModel):
 
 
 class PendingAgreementCreate(BaseModel):
-    title: str
-    owner: str
-    owner_email: Optional[str] = None
-    due_date: Optional[str] = None
+    internal_company: str
+    team_member: str
+    requester_email: Optional[str] = None
+    attorney_assigned: Optional[str] = None
+    matter: str
+    status_notes: str
     status: Optional[str] = None
+    internal_completion_date: Optional[str] = None
+    fully_executed_date: Optional[str] = None
+    title: Optional[str] = None
+    owner: Optional[str] = None
+    owner_email: Optional[str] = None
     contract_id: Optional[str] = None
 
-    @field_validator("owner", mode="before")
-    def normalize_owner(cls, value: str) -> str:
+    @field_validator("internal_company", "team_member", "matter", "status_notes", mode="before")
+    def normalize_required_text(cls, value: str) -> str:
         return str(value or "").strip()
+
+    @field_validator("requester_email", mode="before")
+    def normalize_requester_email(cls, value: Optional[str]) -> Optional[str]:
+        cleaned = str(value or "").strip().lower()
+        return cleaned or None
+
+    @field_validator("attorney_assigned", mode="before")
+    def normalize_attorney_assigned(cls, value: Optional[str]) -> Optional[str]:
+        cleaned = str(value or "").strip()
+        return cleaned or None
+
+    @field_validator("title", "owner", mode="before")
+    def normalize_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip()
+        return cleaned or None
 
     @field_validator("owner_email", mode="before")
     def normalize_owner_email(cls, value: Optional[str]) -> Optional[str]:
@@ -1772,18 +1988,48 @@ class PendingAgreementCreate(BaseModel):
 
 
 class PendingAgreementUpdate(BaseModel):
+    internal_company: Optional[str] = None
+    team_member: Optional[str] = None
+    requester_email: Optional[str] = None
+    attorney_assigned: Optional[str] = None
+    matter: Optional[str] = None
+    status_notes: Optional[str] = None
+    internal_completion_date: Optional[str] = None
+    fully_executed_date: Optional[str] = None
     title: Optional[str] = None
     owner: Optional[str] = None
     owner_email: Optional[str] = None
-    due_date: Optional[str] = None
     status: Optional[str] = None
     contract_id: Optional[str] = None
 
-    @field_validator("owner", mode="before")
-    def normalize_owner(cls, value: Optional[str]) -> Optional[str]:
+    @field_validator(
+        "internal_company",
+        "team_member",
+        "matter",
+        "status_notes",
+        "title",
+        "owner",
+        mode="before",
+    )
+    def normalize_text(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
-        return str(value or "").strip()
+        cleaned = str(value or "").strip()
+        return cleaned or None
+
+    @field_validator("requester_email", mode="before")
+    def normalize_requester_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip().lower()
+        return cleaned or None
+
+    @field_validator("attorney_assigned", mode="before")
+    def normalize_attorney_assigned(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip()
+        return cleaned or None
 
     @field_validator("owner_email", mode="before")
     def normalize_owner_email(cls, value: Optional[str]) -> Optional[str]:
@@ -1875,6 +2121,29 @@ class PendingAgreementReminderUpdate(BaseModel):
             return None
         cleaned = str(value).strip()
         return cleaned or None
+
+
+class PendingAgreementRecipient(BaseModel):
+    name: Optional[str] = None
+    email: str
+
+    @field_validator("name", mode="before")
+    def normalize_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value or "").strip()
+        return cleaned or None
+
+    @field_validator("email", mode="before")
+    def normalize_email(cls, value: str) -> str:
+        cleaned = str(value or "").strip().lower()
+        if not cleaned or "@" not in cleaned:
+            raise ValueError("Valid email is required")
+        return cleaned
+
+
+class PendingAgreementRecipientsUpdate(BaseModel):
+    recipients: List[PendingAgreementRecipient]
 
 
 class TaskCreate(BaseModel):
@@ -2213,10 +2482,46 @@ CREATE TABLE IF NOT EXISTS pending_agreements (
   contract_id TEXT,
   due_date TEXT,
   status TEXT,
-  created_at TEXT NOT NULL
+  internal_company TEXT,
+  team_member TEXT,
+  requester_email TEXT,
+  attorney_assigned TEXT,
+  matter TEXT,
+  status_notes TEXT,
+  internal_completion_date TEXT,
+  fully_executed_date TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pending_agreements_created_at
   ON pending_agreements(created_at);
+
+CREATE TABLE IF NOT EXISTS pending_agreement_files (
+  id TEXT PRIMARY KEY,
+  pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+  file_name TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  file_type TEXT NOT NULL,
+  uploaded_by INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+  uploaded_at TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_agreement
+  ON pending_agreement_files(pending_agreement_id);
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_files_type
+  ON pending_agreement_files(file_type);
+
+CREATE TABLE IF NOT EXISTS pending_agreement_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pending_agreement_id TEXT NOT NULL REFERENCES pending_agreements(id) ON DELETE CASCADE,
+  created_by INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
+  note_text TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_agreement_notes_agreement
+  ON pending_agreement_notes(pending_agreement_id);
 
 CREATE TABLE IF NOT EXISTS pending_agreement_reminders (
   id TEXT PRIMARY KEY,
@@ -2407,6 +2712,12 @@ DEFAULT_NOTIFICATION_USERS = [
 ]
 NEW_USER_NOTIFICATION_EMAIL_SETTING_KEY = "new_user_notification_email"
 DEFAULT_NEW_USER_NOTIFICATION_EMAIL = "placeholder@gmail.com"
+PENDING_AGREEMENT_RECIPIENTS_SETTING_KEY = "pending_agreement_recipients"
+DEFAULT_PENDING_AGREEMENT_RECIPIENTS = [
+    {"name": "Sandy", "email": "sandy@contractsuite.com"},
+    {"name": "Johnny O.", "email": "johnny.o@contractsuite.com"},
+    {"name": "Biana H.", "email": "biana.h@contractsuite.com"},
+]
 
 # ----------------------------
 # Tag + agreement helpers
@@ -3324,6 +3635,30 @@ def update_new_user_notification_email(
     return {"email": email}
 
 
+@app.get("/api/admin/pending-agreement-recipients")
+def get_pending_agreement_recipients(_: Dict[str, Any] = Depends(require_admin)):
+    with db() as conn:
+        return {"recipients": _get_pending_agreement_recipients(conn)}
+
+
+@app.put("/api/admin/pending-agreement-recipients")
+def update_pending_agreement_recipients(
+    payload: PendingAgreementRecipientsUpdate, _: Dict[str, Any] = Depends(require_admin)
+):
+    recipients = _normalize_pending_agreement_recipients(
+        [recipient.model_dump() for recipient in payload.recipients]
+    )
+    if not recipients:
+        raise HTTPException(status_code=400, detail="At least one recipient is required")
+    with db() as conn:
+        _upsert_app_setting(
+            conn,
+            PENDING_AGREEMENT_RECIPIENTS_SETTING_KEY,
+            json.dumps(recipients),
+        )
+    return {"recipients": recipients}
+
+
 # ----------------------------
 # Tag permission endpoints
 # ----------------------------
@@ -3689,14 +4024,16 @@ def _pending_agreement_visible_to_user(
     user: Optional[Dict[str, Any]],
     request: Optional[Request],
 ) -> bool:
-    if not AUTH_REQUIRED or _is_admin_user(user):
+    if not AUTH_REQUIRED:
+        return True
+    if _is_admin_user(user) or _user_has_permission(conn, user, "pending_agreements_manage"):
         return True
     if not user:
         return False
     user_email = (user.get("email") or "").lower()
     user_name = (user.get("name") or "").lower()
-    owner_email = (agreement.get("owner_email") or "").lower()
-    owner_name = (agreement.get("owner") or "").lower()
+    owner_email = (agreement.get("requester_email") or agreement.get("owner_email") or "").lower()
+    owner_name = (agreement.get("team_member") or agreement.get("owner") or "").lower()
     is_recipient = bool(
         (user_email and owner_email and owner_email == user_email)
         or (user_name and owner_name and owner_name == user_name)
@@ -3720,6 +4057,67 @@ def _pending_agreement_visible_to_user(
     return contract_id in visible_ids
 
 
+def _can_manage_pending_agreements(
+    conn: sqlite3.Connection, user: Optional[Dict[str, Any]]
+) -> bool:
+    return bool(_user_has_permission(conn, user, "pending_agreements_manage"))
+
+
+def _store_pending_agreement_file(
+    conn: sqlite3.Connection,
+    agreement_id: str,
+    file: UploadFile,
+    file_type: str,
+    user: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    file_hash = sha256_bytes(data)
+    filename = safe_filename(file.filename or "upload.bin")
+    directory = os.path.join(DATA_ROOT, "pending_agreements", agreement_id)
+    os.makedirs(directory, exist_ok=True)
+    stored_name = f"{uuid.uuid4()}_{file_hash[:16]}_{filename}"
+    stored_path = os.path.join(directory, stored_name)
+    with open(stored_path, "wb") as handle:
+        handle.write(data)
+    uploaded_at = now_iso()
+    file_id = str(uuid.uuid4())
+    conn.execute(
+        """
+        INSERT INTO pending_agreement_files (
+          id, pending_agreement_id, file_name, stored_path, mime_type,
+          file_type, uploaded_by, uploaded_at, sha256, size_bytes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id,
+            agreement_id,
+            filename,
+            stored_path,
+            file.content_type or "application/octet-stream",
+            file_type,
+            user["id"] if user else None,
+            uploaded_at,
+            file_hash,
+            len(data),
+        ),
+    )
+    return {
+        "id": file_id,
+        "pending_agreement_id": agreement_id,
+        "file_name": filename,
+        "stored_path": stored_path,
+        "mime_type": file.content_type or "application/octet-stream",
+        "file_type": file_type,
+        "uploaded_by": user["id"] if user else None,
+        "uploaded_at": uploaded_at,
+        "sha256": file_hash,
+        "size_bytes": len(data),
+    }
+
+
 @app.get("/api/pending-agreements")
 def list_pending_agreements(
     request: Request,
@@ -3734,20 +4132,25 @@ def list_pending_agreements(
     params: List[Any] = []
     if query:
         where_clause = (
-            "WHERE lower(p.title) LIKE ? OR lower(p.owner) LIKE ? "
-            "OR lower(coalesce(p.owner_email, '')) LIKE ? "
+            "WHERE lower(coalesce(p.matter, p.title)) LIKE ? "
+            "OR lower(coalesce(p.team_member, p.owner)) LIKE ? "
+            "OR lower(coalesce(p.requester_email, p.owner_email, '')) LIKE ? "
+            "OR lower(coalesce(p.attorney_assigned, '')) LIKE ? "
+            "OR lower(coalesce(p.internal_company, '')) LIKE ? "
             "OR lower(coalesce(p.status, '')) LIKE ? "
             "OR lower(coalesce(c.title, '')) LIKE ? "
             "OR lower(coalesce(c.vendor, '')) LIKE ?"
         )
         like = f"%{query.lower()}%"
-        params.extend([like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like])
 
     with db() as conn:
-        _require_permission(conn, user, "pending_agreements_view")
-        is_admin = _is_admin_user(user)
-        if AUTH_REQUIRED and not is_admin:
-            recipient_clause = "(lower(coalesce(p.owner_email, '')) = ? OR lower(coalesce(p.owner, '')) = ?)"
+        can_manage = _can_manage_pending_agreements(conn, user)
+        if AUTH_REQUIRED and not can_manage:
+            recipient_clause = (
+                "(lower(coalesce(p.requester_email, p.owner_email, '')) = ? "
+                "OR lower(coalesce(p.team_member, p.owner, '')) = ?)"
+            )
             if where_clause:
                 where_clause = f"{where_clause} AND {recipient_clause}"
             else:
@@ -3761,9 +4164,26 @@ def list_pending_agreements(
 
         rows = conn.execute(
             f"""
-            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
-                   p.contract_id, p.created_at, c.title AS contract_title,
-                   c.vendor AS contract_vendor
+            SELECT p.id, p.internal_company, p.team_member, p.requester_email,
+                   p.attorney_assigned, p.matter, p.status_notes, p.status,
+                   p.internal_completion_date, p.fully_executed_date,
+                   p.title, p.owner, p.owner_email, p.contract_id,
+                   p.created_at, p.updated_at,
+                   c.title AS contract_title, c.vendor AS contract_vendor,
+                   (
+                       SELECT n.note_text
+                       FROM pending_agreement_notes n
+                       WHERE n.pending_agreement_id = p.id
+                       ORDER BY n.created_at DESC
+                       LIMIT 1
+                   ) AS latest_note,
+                   (
+                       SELECT n.created_at
+                       FROM pending_agreement_notes n
+                       WHERE n.pending_agreement_id = p.id
+                       ORDER BY n.created_at DESC
+                       LIMIT 1
+                   ) AS latest_note_at
             FROM pending_agreements p
             LEFT JOIN contracts c ON c.id = p.contract_id
             {where_clause}
@@ -3772,7 +4192,7 @@ def list_pending_agreements(
             params,
         ).fetchall()
         items = [dict(r) for r in rows]
-        if AUTH_REQUIRED and not is_admin:
+        if AUTH_REQUIRED and not can_manage:
             items = [
                 item
                 for item in items
@@ -3783,23 +4203,119 @@ def list_pending_agreements(
         return {"items": paged, "total": total, "limit": limit, "offset": offset}
 
 
+@app.get("/api/pending-agreements/export")
+def export_pending_agreements(
+    request: Request,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
+):
+    where_parts = []
+    params: List[Any] = []
+    if status:
+        where_parts.append("lower(coalesce(p.status, '')) = ?")
+        params.append(status.strip().lower())
+    if start_date:
+        where_parts.append("p.created_at >= ?")
+        params.append(start_date)
+    if end_date:
+        where_parts.append("p.created_at <= ?")
+        params.append(end_date)
+
+    with db() as conn:
+        can_manage = _can_manage_pending_agreements(conn, user)
+        if AUTH_REQUIRED and not can_manage:
+            where_parts.append(
+                "(lower(coalesce(p.requester_email, p.owner_email, '')) = ? "
+                "OR lower(coalesce(p.team_member, p.owner, '')) = ?)"
+            )
+            params.extend(
+                [
+                    (user.get("email") or "").lower(),
+                    (user.get("name") or "").lower(),
+                ]
+            )
+
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.internal_company, p.team_member, p.requester_email,
+                   p.attorney_assigned, p.matter, p.status_notes, p.status,
+                   p.internal_completion_date, p.fully_executed_date,
+                   p.created_at, p.updated_at
+            FROM pending_agreements p
+            {where_clause}
+            ORDER BY p.created_at DESC
+            """,
+            params,
+        ).fetchall()
+        items = [dict(r) for r in rows]
+        if AUTH_REQUIRED and not can_manage:
+            items = [
+                item
+                for item in items
+                if _pending_agreement_visible_to_user(conn, item, user, request)
+            ]
+        return {"items": items, "count": len(items)}
+
+
+@app.get("/api/pending-agreements/{agreement_id}")
+def get_pending_agreement(
+    agreement_id: str,
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
+):
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT p.id, p.internal_company, p.team_member, p.requester_email,
+                   p.attorney_assigned, p.matter, p.status_notes, p.status,
+                   p.internal_completion_date, p.fully_executed_date,
+                   p.title, p.owner, p.owner_email, p.contract_id,
+                   p.created_at, p.updated_at,
+                   c.title AS contract_title, c.vendor AS contract_vendor
+            FROM pending_agreements p
+            LEFT JOIN contracts c ON c.id = p.contract_id
+            WHERE p.id = ?
+            """,
+            (agreement_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+        agreement = dict(row)
+        if not _pending_agreement_visible_to_user(conn, agreement, user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
+        return agreement
+
+
 @app.post("/api/pending-agreements")
 def create_pending_agreement(
     payload: PendingAgreementCreate,
     user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
-    title = payload.title.strip()
-    owner = payload.owner.strip()
-    if not title or not owner:
-        raise HTTPException(status_code=400, detail="title and owner are required")
-    owner_email = payload.owner_email
-    if not owner_email and "@" in owner:
-        owner_email = owner.strip().lower()
+    internal_company = payload.internal_company.strip()
+    team_member = payload.team_member.strip()
+    matter = payload.matter.strip()
+    status_notes = payload.status_notes.strip()
+    if not internal_company or not team_member or not matter or not status_notes:
+        raise HTTPException(
+            status_code=400,
+            detail="internal_company, team_member, matter, and status_notes are required",
+        )
+    requester_email = payload.requester_email or payload.owner_email
+    if not requester_email and user:
+        requester_email = user.get("email")
+    attorney_assigned = payload.attorney_assigned
     agreement_id = str(uuid.uuid4())
-    due_date = payload.due_date.strip() if payload.due_date else None
-    status = payload.status.strip() if payload.status else None
+    status = payload.status.strip() if payload.status else "Pending Legal Review"
     contract_id = payload.contract_id
     created_at = now_iso()
+    updated_at = created_at
+
+    title = payload.title or matter
+    owner = payload.owner or team_member
+    owner_email = requester_email or payload.owner_email
 
     with db() as conn:
         _require_permission(conn, user, "pending_agreements_manage")
@@ -3812,9 +4328,12 @@ def create_pending_agreement(
         conn.execute(
             """
             INSERT INTO pending_agreements (
-              id, title, owner, owner_email, contract_id, due_date, status, created_at
+              id, title, owner, owner_email, contract_id, status,
+              internal_company, team_member, requester_email, attorney_assigned,
+              matter, status_notes, internal_completion_date, fully_executed_date,
+              created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 agreement_id,
@@ -3822,11 +4341,28 @@ def create_pending_agreement(
                 owner,
                 owner_email,
                 contract_id,
-                due_date,
                 status,
+                internal_company,
+                team_member,
+                requester_email,
+                attorney_assigned,
+                matter,
+                status_notes,
+                payload.internal_completion_date,
+                payload.fully_executed_date,
                 created_at,
+                updated_at,
             ),
         )
+        if status_notes:
+            conn.execute(
+                """
+                INSERT INTO pending_agreement_notes
+                  (pending_agreement_id, created_by, note_text, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (agreement_id, user["id"] if user else None, status_notes, created_at),
+            )
         _log_action(
             conn,
             user,
@@ -3837,14 +4373,161 @@ def create_pending_agreement(
         )
     return {
         "id": agreement_id,
-        "title": title,
-        "owner": owner,
-        "owner_email": owner_email,
-        "due_date": due_date,
+        "internal_company": internal_company,
+        "team_member": team_member,
+        "requester_email": requester_email,
+        "attorney_assigned": attorney_assigned,
+        "matter": matter,
+        "status_notes": status_notes,
         "status": status,
+        "internal_completion_date": payload.internal_completion_date,
+        "fully_executed_date": payload.fully_executed_date,
         "contract_id": contract_id,
         "created_at": created_at,
+        "updated_at": updated_at,
     }
+
+
+@app.post("/api/pending-agreements/intake")
+async def create_pending_agreement_intake(
+    internal_company: str = Form(...),
+    team_member: str = Form(...),
+    requester_email: Optional[str] = Form(None),
+    attorney_assigned: Optional[str] = Form(None),
+    matter: str = Form(...),
+    status_notes: str = Form(...),
+    file: Optional[UploadFile] = File(None),
+    user: Optional[Dict[str, Any]] = Depends(require_user),
+):
+    internal_company = internal_company.strip()
+    team_member = team_member.strip()
+    matter = matter.strip()
+    status_notes = status_notes.strip()
+    if not internal_company or not team_member or not matter or not status_notes:
+        raise HTTPException(
+            status_code=400,
+            detail="internal_company, team_member, matter, and status_notes are required",
+        )
+    cleaned_requester_email = (requester_email or "").strip().lower() or None
+    if not cleaned_requester_email and user:
+        cleaned_requester_email = (user.get("email") or "").strip().lower() or None
+    attorney_assigned = (attorney_assigned or "").strip() or None
+    agreement_id = str(uuid.uuid4())
+    created_at = now_iso()
+    status = "Pending Legal Review"
+    updated_at = created_at
+
+    title = matter
+    owner = team_member
+    owner_email = cleaned_requester_email
+
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO pending_agreements (
+              id, title, owner, owner_email, contract_id, status,
+              internal_company, team_member, requester_email, attorney_assigned,
+              matter, status_notes, internal_completion_date, fully_executed_date,
+              created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                agreement_id,
+                title,
+                owner,
+                owner_email,
+                None,
+                status,
+                internal_company,
+                team_member,
+                cleaned_requester_email,
+                attorney_assigned,
+                matter,
+                status_notes,
+                None,
+                None,
+                created_at,
+                updated_at,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO pending_agreement_notes
+              (pending_agreement_id, created_by, note_text, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (agreement_id, user["id"] if user else None, status_notes, created_at),
+        )
+        file_record = None
+        if file and file.filename:
+            file_record = _store_pending_agreement_file(conn, agreement_id, file, "draft", user)
+        _log_action(
+            conn,
+            user,
+            "pending_agreement_intake_created",
+            "pending_agreement",
+            agreement_id,
+            {"file_attached": bool(file_record)},
+        )
+
+        recipients = _get_pending_agreement_recipient_emails(conn)
+
+    recipients = _parse_email_list(recipients)
+    portal_link = _format_app_link(
+        "View Pending Agreement",
+        f"/?pendingAgreementId={agreement_id}",
+    )
+    if recipients:
+        subject = f"New Contract Intake Submission: {matter}"
+        body_lines = [
+            "Intake Form – Contracts & Agreements has a new submission.",
+        ]
+        if portal_link:
+            body_lines.append(
+                f"Click here to view it in the Contracts & Agreements Portal: {portal_link}"
+            )
+        _send_email_with_log(
+            recipients,
+            subject,
+            "\n".join(body_lines),
+            kind="pending_agreement_intake_legal",
+            related_id=agreement_id,
+            metadata={"agreement_id": agreement_id, "matter": matter},
+        )
+
+    if cleaned_requester_email:
+        subject = f"Contract Intake Submitted: {matter}"
+        body_lines = [
+            "Your Intake Form – Contracts & Agreements has been submitted to Legal.",
+        ]
+        if portal_link:
+            body_lines.append(
+                f"Please visit the portal to view your Pending Agreement: {portal_link}"
+            )
+        _send_email_with_log(
+            [cleaned_requester_email],
+            subject,
+            "\n".join(body_lines),
+            kind="pending_agreement_intake_requester",
+            related_id=agreement_id,
+            metadata={"agreement_id": agreement_id, "matter": matter},
+        )
+
+    response = {
+        "id": agreement_id,
+        "internal_company": internal_company,
+        "team_member": team_member,
+        "requester_email": cleaned_requester_email,
+        "attorney_assigned": attorney_assigned,
+        "matter": matter,
+        "status_notes": status_notes,
+        "status": status,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "file": file_record,
+    }
+    return response
 
 
 @app.put("/api/pending-agreements/{agreement_id}")
@@ -3858,7 +4541,10 @@ def update_pending_agreement(
         _require_permission(conn, user, "pending_agreements_manage")
         row = conn.execute(
             """
-            SELECT id, title, owner, owner_email, contract_id, due_date, status, created_at
+            SELECT id, title, owner, owner_email, contract_id, status,
+                   internal_company, team_member, requester_email, attorney_assigned,
+                   matter, status_notes, internal_completion_date, fully_executed_date,
+                   created_at, updated_at
             FROM pending_agreements WHERE id = ?
             """,
             (agreement_id,),
@@ -3873,25 +4559,49 @@ def update_pending_agreement(
         owner = agreement["owner"]
         owner_email = agreement["owner_email"]
         contract_id = agreement["contract_id"]
-        due_date = agreement["due_date"]
         status = agreement["status"]
+        internal_company = agreement["internal_company"]
+        team_member = agreement["team_member"]
+        requester_email = agreement["requester_email"]
+        attorney_assigned = agreement["attorney_assigned"]
+        matter = agreement["matter"]
+        status_notes = agreement["status_notes"]
+        internal_completion_date = agreement["internal_completion_date"]
+        fully_executed_date = agreement["fully_executed_date"]
 
+        if payload.internal_company is not None:
+            internal_company = payload.internal_company or ""
+            if not internal_company:
+                raise HTTPException(status_code=400, detail="internal_company cannot be empty")
+        if payload.team_member is not None:
+            team_member = payload.team_member or ""
+            if not team_member:
+                raise HTTPException(status_code=400, detail="team_member cannot be empty")
+            owner = team_member
+            if "@" in team_member and not owner_email:
+                owner_email = team_member.strip().lower()
+        if payload.requester_email is not None:
+            requester_email = payload.requester_email
+            owner_email = requester_email
+        if payload.attorney_assigned is not None:
+            attorney_assigned = payload.attorney_assigned
+        if payload.matter is not None:
+            matter = payload.matter or ""
+            if not matter:
+                raise HTTPException(status_code=400, detail="matter cannot be empty")
+            title = matter
+        if payload.status_notes is not None:
+            status_notes = payload.status_notes
+        if payload.internal_completion_date is not None:
+            internal_completion_date = payload.internal_completion_date or None
+        if payload.fully_executed_date is not None:
+            fully_executed_date = payload.fully_executed_date or None
         if payload.title is not None:
-            cleaned = payload.title.strip()
-            if not cleaned:
-                raise HTTPException(status_code=400, detail="title cannot be empty")
-            title = cleaned
+            title = payload.title or ""
         if payload.owner is not None:
-            cleaned = payload.owner.strip()
-            if not cleaned:
-                raise HTTPException(status_code=400, detail="owner cannot be empty")
-            owner = cleaned
-            if "@" in owner and not owner_email:
-                owner_email = owner.strip().lower()
+            owner = payload.owner or ""
         if payload.owner_email is not None:
             owner_email = payload.owner_email
-        if payload.due_date is not None:
-            due_date = payload.due_date.strip() or None
         if payload.status is not None:
             status = payload.status.strip() or None
         if payload.contract_id is not None:
@@ -3906,10 +4616,29 @@ def update_pending_agreement(
         conn.execute(
             """
             UPDATE pending_agreements
-            SET title = ?, owner = ?, owner_email = ?, contract_id = ?, due_date = ?, status = ?
+            SET title = ?, owner = ?, owner_email = ?, contract_id = ?, status = ?,
+                internal_company = ?, team_member = ?, requester_email = ?, attorney_assigned = ?,
+                matter = ?, status_notes = ?, internal_completion_date = ?, fully_executed_date = ?,
+                updated_at = ?
             WHERE id = ?
             """,
-            (title, owner, owner_email, contract_id, due_date, status, agreement_id),
+            (
+                title,
+                owner,
+                owner_email,
+                contract_id,
+                status,
+                internal_company,
+                team_member,
+                requester_email,
+                attorney_assigned,
+                matter,
+                status_notes,
+                internal_completion_date,
+                fully_executed_date,
+                now_iso(),
+                agreement_id,
+            ),
         )
         _log_action(
             conn,
@@ -3928,11 +4657,18 @@ def update_pending_agreement(
 
     return {
         "id": agreement_id,
+        "internal_company": internal_company,
+        "team_member": team_member,
+        "requester_email": requester_email,
+        "attorney_assigned": attorney_assigned,
+        "matter": matter,
+        "status_notes": status_notes,
+        "status": status,
+        "internal_completion_date": internal_completion_date,
+        "fully_executed_date": fully_executed_date,
         "title": title,
         "owner": owner,
         "owner_email": owner_email,
-        "due_date": due_date,
-        "status": status,
         "contract_id": contract_id,
         "contract_title": contract["title"] if contract else None,
         "contract_vendor": contract["vendor"] if contract else None,
@@ -3947,9 +4683,11 @@ def list_pending_agreement_notes(
     user: Optional[Dict[str, Any]] = Depends(require_user),
 ):
     with db() as conn:
-        _require_permission(conn, user, "pending_agreements_view")
         row = conn.execute(
-            "SELECT id, owner, owner_email, contract_id FROM pending_agreements WHERE id = ?",
+            """
+            SELECT id, team_member, requester_email, owner, owner_email, contract_id
+            FROM pending_agreements WHERE id = ?
+            """,
             (agreement_id,),
         ).fetchone()
         if not row:
@@ -3958,16 +4696,22 @@ def list_pending_agreement_notes(
             raise HTTPException(status_code=403, detail="Access denied")
         rows = conn.execute(
             """
-            SELECT n.id, n.pending_agreement_id, n.note, n.created_at, n.user_id,
+            SELECT n.id, n.pending_agreement_id, n.note_text, n.created_at, n.created_by,
                    u.name AS user_name, u.email AS user_email
-            FROM agreement_notes n
-            LEFT JOIN auth_users u ON u.id = n.user_id
+            FROM pending_agreement_notes n
+            LEFT JOIN auth_users u ON u.id = n.created_by
             WHERE n.pending_agreement_id = ?
-            ORDER BY n.created_at DESC
+            ORDER BY n.created_at ASC
             """,
             (agreement_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["note"] = item.pop("note_text")
+            item["user_id"] = item.pop("created_by")
+            items.append(item)
+        return items
 
 
 @app.post("/api/pending-agreements/{agreement_id}/notes")
@@ -3984,7 +4728,10 @@ def create_pending_agreement_note(
     with db() as conn:
         _require_permission(conn, user, "pending_agreements_manage")
         row = conn.execute(
-            "SELECT id, owner, owner_email, contract_id FROM pending_agreements WHERE id = ?",
+            """
+            SELECT id, team_member, requester_email, owner, owner_email, contract_id
+            FROM pending_agreements WHERE id = ?
+            """,
             (agreement_id,),
         ).fetchone()
         if not row:
@@ -3993,7 +4740,8 @@ def create_pending_agreement_note(
             raise HTTPException(status_code=403, detail="Access denied")
         cur = conn.execute(
             """
-            INSERT INTO agreement_notes (pending_agreement_id, user_id, note, created_at)
+            INSERT INTO pending_agreement_notes
+              (pending_agreement_id, created_by, note_text, created_at)
             VALUES (?, ?, ?, ?)
             """,
             (agreement_id, user["id"], note, created_at),
@@ -4016,6 +4764,151 @@ def create_pending_agreement_note(
             "user_name": user.get("name"),
             "user_email": user.get("email"),
         }
+
+
+@app.get("/api/pending-agreements/{agreement_id}/files")
+def list_pending_agreement_files(
+    agreement_id: str,
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
+):
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, team_member, requester_email, owner, owner_email, contract_id
+            FROM pending_agreements WHERE id = ?
+            """,
+            (agreement_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+        if not _pending_agreement_visible_to_user(conn, dict(row), user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
+        rows = conn.execute(
+            """
+            SELECT f.id, f.pending_agreement_id, f.file_name, f.mime_type,
+                   f.file_type, f.uploaded_by, f.uploaded_at, f.size_bytes,
+                   u.name AS user_name, u.email AS user_email
+            FROM pending_agreement_files f
+            LEFT JOIN auth_users u ON u.id = f.uploaded_by
+            WHERE f.pending_agreement_id = ?
+            ORDER BY f.uploaded_at ASC
+            """,
+            (agreement_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/pending-agreements/{agreement_id}/files")
+def upload_pending_agreement_file(
+    agreement_id: str,
+    request: Request,
+    file_type: str = Form(...),
+    file: UploadFile = File(...),
+    user: Optional[Dict[str, Any]] = Depends(require_user),
+):
+    file_type = file_type.strip().lower()
+    if file_type not in {"draft", "executed"}:
+        raise HTTPException(status_code=400, detail="file_type must be draft or executed")
+    with db() as conn:
+        agreement_row = conn.execute(
+            """
+            SELECT id, team_member, requester_email, owner, owner_email,
+                   status, fully_executed_date, contract_id
+            FROM pending_agreements WHERE id = ?
+            """,
+            (agreement_id,),
+        ).fetchone()
+        if not agreement_row:
+            raise HTTPException(status_code=404, detail="Pending agreement not found")
+        agreement = dict(agreement_row)
+        can_manage = _can_manage_pending_agreements(conn, user)
+        if not can_manage:
+            if file_type != "draft":
+                raise HTTPException(status_code=403, detail="Access denied")
+            if not _pending_agreement_visible_to_user(conn, agreement, user, request):
+                raise HTTPException(status_code=403, detail="Access denied")
+        file_record = _store_pending_agreement_file(conn, agreement_id, file, file_type, user)
+        updated_at = now_iso()
+        if file_type == "executed":
+            fully_executed_date = agreement.get("fully_executed_date") or updated_at
+            conn.execute(
+                """
+                UPDATE pending_agreements
+                SET status = ?, fully_executed_date = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                ("Executed/Complete", fully_executed_date, updated_at, agreement_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE pending_agreements SET updated_at = ? WHERE id = ?",
+                (updated_at, agreement_id),
+            )
+
+        _log_action(
+            conn,
+            user,
+            "pending_agreement_file_uploaded",
+            "pending_agreement",
+            agreement_id,
+            {"file_type": file_type, "file_id": file_record["id"]},
+        )
+
+        requester_email = _resolve_pending_agreement_recipient(conn, agreement_row)
+
+    if file_type == "executed" and requester_email:
+        portal_link = _format_app_link(
+            "View Pending Agreement",
+            f"/?pendingAgreementId={agreement_id}",
+        )
+        subject = "Executed contract available"
+        body_lines = [
+            "The final executed contract has been uploaded to your Pending Agreement.",
+        ]
+        if portal_link:
+            body_lines.append(f"View the record here: {portal_link}")
+        _send_email_with_log(
+            [requester_email],
+            subject,
+            "\n".join(body_lines),
+            kind="pending_agreement_executed",
+            related_id=agreement_id,
+            metadata={"agreement_id": agreement_id, "file_id": file_record["id"]},
+        )
+
+    return file_record
+
+
+@app.get("/api/pending-agreement-files/{file_id}")
+def download_pending_agreement_file(
+    file_id: str,
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(require_user),
+):
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT f.id, f.file_name, f.stored_path, f.mime_type, f.pending_agreement_id,
+                   p.team_member, p.requester_email, p.owner, p.owner_email, p.contract_id
+            FROM pending_agreement_files f
+            JOIN pending_agreements p ON p.id = f.pending_agreement_id
+            WHERE f.id = ?
+            """,
+            (file_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="File not found")
+        if not _pending_agreement_visible_to_user(conn, dict(row), user, request):
+            raise HTTPException(status_code=403, detail="Access denied")
+        path = row["stored_path"]
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="File missing on disk")
+        return FileResponse(
+            path,
+            media_type=row["mime_type"],
+            filename=row["file_name"],
+        )
 
 
 @app.delete("/api/pending-agreements/{agreement_id}")
@@ -5927,10 +6820,10 @@ def _parse_email_list(values: List[str]) -> List[str]:
 def _resolve_pending_agreement_recipient(
     conn: sqlite3.Connection, agreement: sqlite3.Row
 ) -> Optional[str]:
-    owner_email = (agreement["owner_email"] or "").strip().lower()
+    owner_email = (agreement["requester_email"] or agreement["owner_email"] or "").strip().lower()
     if owner_email:
         return owner_email
-    owner = (agreement["owner"] or "").strip()
+    owner = (agreement["team_member"] or agreement["owner"] or "").strip()
     if "@" in owner:
         return owner.strip().lower()
     if owner:
@@ -5972,11 +6865,13 @@ def _format_pending_agreement_body(
         return "\n".join(lines)
     lines.append("Pending agreements:")
     for agreement in agreements:
-        due_date = agreement["due_date"] or "N/A"
         status = agreement["status"] or "Pending"
         contract_label = agreement["contract_title"] or agreement["contract_id"] or "Unlinked"
+        matter = agreement["matter"] or agreement["title"]
+        owner = agreement["team_member"] or agreement["owner"]
+        entity = agreement["internal_company"] or "N/A"
         lines.append(
-            f"- {agreement['title']} (Owner: {agreement['owner']}, Contract: {contract_label}, Due: {due_date}, Status: {status})"
+            f"- {matter} (Requester: {owner}, Entity: {entity}, Contract: {contract_label}, Status: {status})"
         )
     app_link = _format_app_link("Open ContractOCR")
     if app_link:
@@ -5985,16 +6880,15 @@ def _format_pending_agreement_body(
 
 
 def _format_pending_agreement_nudge_body(agreement: sqlite3.Row) -> str:
-    due_date = agreement["due_date"] or "N/A"
     status = agreement["status"] or "Pending"
     contract_label = agreement["contract_title"] or agreement["contract_id"] or "Unlinked"
     lines = [
         "A pending agreement is ready for your review.",
         "",
-        f"Title: {agreement['title']}",
-        f"Owner: {agreement['owner']}",
+        f"Matter: {agreement['matter'] or agreement['title']}",
+        f"Requester: {agreement['team_member'] or agreement['owner']}",
+        f"Entity: {agreement['internal_company'] or 'N/A'}",
         f"Contract: {contract_label}",
-        f"Due Date: {due_date}",
         f"Status: {status}",
     ]
     app_link = _format_app_link("Open ContractOCR")
@@ -6012,16 +6906,15 @@ def _format_pending_agreement_nudge_body(agreement: sqlite3.Row) -> str:
 def _format_pending_agreement_action_body(
     agreement: sqlite3.Row, action_label: str
 ) -> str:
-    due_date = agreement["due_date"] or "N/A"
     status = agreement["status"] or "Pending"
     contract_label = agreement["contract_title"] or agreement["contract_id"] or "Unlinked"
     lines = [
         f"Pending agreement {action_label.lower()} notification.",
         "",
-        f"Title: {agreement['title']}",
-        f"Owner: {agreement['owner']}",
+        f"Matter: {agreement['matter'] or agreement['title']}",
+        f"Requester: {agreement['team_member'] or agreement['owner']}",
+        f"Entity: {agreement['internal_company'] or 'N/A'}",
         f"Contract: {contract_label}",
-        f"Due Date: {due_date}",
         f"Status: {status}",
     ]
     app_link = _format_app_link("Open ContractOCR")
@@ -6087,7 +6980,8 @@ def send_pending_agreement_reminders(date_str: Optional[str] = None):
         ).fetchall()
         agreements = conn.execute(
             """
-            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status, p.contract_id,
+            SELECT p.id, p.title, p.owner, p.owner_email, p.status, p.contract_id,
+                   p.internal_company, p.team_member, p.requester_email, p.matter,
                    p.created_at, c.title AS contract_title
             FROM pending_agreements p
             LEFT JOIN contracts c ON c.id = p.contract_id
@@ -6145,7 +7039,8 @@ def nudge_pending_agreement(
         _require_permission(conn, user, "pending_agreements_manage")
         agreement = conn.execute(
             """
-            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
+            SELECT p.id, p.title, p.owner, p.owner_email, p.status,
+                   p.internal_company, p.team_member, p.requester_email, p.matter,
                    p.contract_id, p.created_at, c.title AS contract_title,
                    c.vendor AS contract_vendor
             FROM pending_agreements p
@@ -6165,7 +7060,7 @@ def nudge_pending_agreement(
                 detail="Pending agreement owner email is missing",
             )
 
-    subject = f"Pending agreement nudge: {agreement['title']}"
+    subject = f"Pending agreement nudge: {agreement['matter'] or agreement['title']}"
     body = _format_pending_agreement_nudge_body(agreement)
     _send_email_with_log(
         [recipient],
@@ -6176,7 +7071,7 @@ def nudge_pending_agreement(
         metadata={
             "agreement_id": agreement_id,
             "title": agreement["title"],
-            "due_date": agreement["due_date"],
+            "matter": agreement["matter"] or agreement["title"],
             "owner_email": recipient,
             "contract_id": agreement["contract_id"],
         },
@@ -6200,7 +7095,8 @@ def action_pending_agreement(
         _require_permission(conn, user, "pending_agreements_manage")
         agreement = conn.execute(
             """
-            SELECT p.id, p.title, p.owner, p.owner_email, p.due_date, p.status,
+            SELECT p.id, p.title, p.owner, p.owner_email, p.status,
+                   p.internal_company, p.team_member, p.requester_email, p.matter,
                    p.contract_id, p.created_at, c.title AS contract_title,
                    c.vendor AS contract_vendor
             FROM pending_agreements p
@@ -6232,7 +7128,7 @@ def action_pending_agreement(
                 detail="Pending agreement owner email is missing",
             )
 
-    subject = f"Pending agreement {action}: {agreement['title']}"
+    subject = f"Pending agreement {action}: {agreement['matter'] or agreement['title']}"
     updated_agreement = dict(agreement)
     updated_agreement["status"] = action_label
     body = _format_pending_agreement_action_body(updated_agreement, action_label)
