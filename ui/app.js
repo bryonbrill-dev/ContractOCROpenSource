@@ -181,6 +181,23 @@ function initCollapsibleHeaders(root = document) {
   });
 }
 
+function initSidebarToggle() {
+  const toggleButton = $("sidebarToggle");
+  if (!toggleButton) return;
+  const applyState = (collapsed) => {
+    document.body.classList.toggle("sidebar-collapsed", collapsed);
+    toggleButton.textContent = collapsed ? "Show menu" : "Hide menu";
+    toggleButton.setAttribute("aria-pressed", collapsed ? "true" : "false");
+  };
+  const stored = window.localStorage.getItem("sidebarCollapsed");
+  applyState(stored === "true");
+  toggleButton.addEventListener("click", () => {
+    const collapsed = !document.body.classList.contains("sidebar-collapsed");
+    window.localStorage.setItem("sidebarCollapsed", collapsed ? "true" : "false");
+    applyState(collapsed);
+  });
+}
+
 function initModal() {
   const { overlay, confirm, cancel, close } = getModalElements();
   if (!overlay || !confirm || !cancel || !close) return;
@@ -5119,6 +5136,7 @@ initPreviewFullscreen();
 initGuidedTours();
 initAdminUi();
 initCollapsibleHeaders();
+initSidebarToggle();
 showPage("contracts");
 
 async function loadAppData() {
