@@ -54,6 +54,7 @@ const state = {
   permissionAssignments: {},
   userPermissions: [],
   adminUserEditId: null,
+  adminUserModalTrigger: null,
   adminRoleEditId: null,
   adminProfitCenterEditId: null,
   newUserNotificationEmail: "",
@@ -87,7 +88,7 @@ function getModalElements() {
   };
 }
 
-function closeModal(result) {
+function closeConfirmModal(result) {
   const { overlay } = getModalElements();
   if (overlay) {
     overlay.classList.add("hidden");
@@ -168,17 +169,17 @@ function initModal() {
   const { overlay, confirm, cancel, close } = getModalElements();
   if (!overlay || !confirm || !cancel || !close) return;
 
-  confirm.addEventListener("click", () => closeModal(true));
-  cancel.addEventListener("click", () => closeModal(false));
-  close.addEventListener("click", () => closeModal(false));
+  confirm.addEventListener("click", () => closeConfirmModal(true));
+  cancel.addEventListener("click", () => closeConfirmModal(false));
+  close.addEventListener("click", () => closeConfirmModal(false));
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) {
-      closeModal(!modalState.showCancel);
+      closeConfirmModal(!modalState.showCancel);
     }
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !overlay.classList.contains("hidden")) {
-      closeModal(!modalState.showCancel);
+      closeConfirmModal(!modalState.showCancel);
     }
   });
 }
@@ -2766,6 +2767,20 @@ function renderNewUserNotificationEmail() {
   input.value = state.newUserNotificationEmail || "";
 }
 
+function setAdminUserModalMode(mode) {
+  const title = $("adminUserModalTitle");
+  const saveButton = $("adminUserSave");
+  const status = $("adminUserStatus");
+  const password = $("adminUserPassword");
+  if (title) title.textContent = mode === "edit" ? "Edit User" : "Add User";
+  if (saveButton) saveButton.setAttribute("data-mode", mode);
+  if (saveButton) saveButton.textContent = "Save";
+  if (status) status.textContent = "";
+  if (password) {
+    password.placeholder = mode === "edit" ? "Set or reset password" : "Set password";
+  }
+}
+
 function resetAdminUserForm() {
   state.adminUserEditId = null;
   const name = $("adminUserName");
@@ -2782,38 +2797,77 @@ function resetAdminUserForm() {
   renderMultiSelectOptions("adminUserProfitCenters", getProfitCenterOptions(), []);
   renderMultiSelectOptions("adminUserProfitCenterGroups", getProfitCenterGroups(), []);
   applyProfitCenterGroupsToCenters();
-  $("adminUserSave")?.setAttribute("data-mode", "create");
-  const adminUserSave = $("adminUserSave");
-  if (adminUserSave) adminUserSave.textContent = "Add user";
-  const status = $("adminUserStatus");
-  if (status) status.textContent = "";
+  setAdminUserModalMode("create");
 }
 
-function openAdminUserEdit(user) {
-  state.adminUserEditId = user.id;
+function populateModalFromRow(row) {
+  if (!row) return;
   const name = $("adminUserName");
   const email = $("adminUserEmail");
   const password = $("adminUserPassword");
   const isActive = $("adminUserActive");
   const isAdmin = $("adminUserAdmin");
-  if (name) name.value = user.name || "";
-  if (email) email.value = user.email || "";
+  const roles = (row.dataset.roles || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => Number(value));
+  const profitCenterIds = (row.dataset.profitCenterIds || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => Number(value));
+  const profitCenterGroups = (row.dataset.profitCenterGroups || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  state.adminUserEditId = Number(row.dataset.userId || 0) || null;
+  if (name) name.value = row.dataset.userName || "";
+  if (email) email.value = row.dataset.userEmail || "";
   if (password) password.value = "";
-  if (isActive) isActive.checked = Boolean(user.is_active);
-  if (isAdmin) isAdmin.checked = Boolean(user.is_admin);
-  renderCheckboxList("adminUserRoles", state.roles, user.role_ids || []);
-  renderMultiSelectOptions("adminUserProfitCenters", getProfitCenterOptions(), user.profit_center_ids || []);
-  renderMultiSelectOptions(
-    "adminUserProfitCenterGroups",
-    getProfitCenterGroups(),
-    user.profit_center_groups || [],
-  );
+  if (isActive) isActive.checked = row.dataset.active === "1";
+  if (isAdmin) isAdmin.checked = row.dataset.admin === "1";
+  renderCheckboxList("adminUserRoles", state.roles, roles);
+  renderMultiSelectOptions("adminUserProfitCenters", getProfitCenterOptions(), profitCenterIds);
+  renderMultiSelectOptions("adminUserProfitCenterGroups", getProfitCenterGroups(), profitCenterGroups);
   applyProfitCenterGroupsToCenters();
-  $("adminUserSave")?.setAttribute("data-mode", "edit");
-  const adminUserSave = $("adminUserSave");
-  if (adminUserSave) adminUserSave.textContent = "Update user";
+  setAdminUserModalMode("edit");
   const status = $("adminUserStatus");
-  if (status) status.textContent = `Editing ${user.name || user.email}`;
+  if (status) status.textContent = `Editing ${row.dataset.userName || row.dataset.userEmail || ""}`;
+}
+
+function openAddUserModal(trigger = null) {
+  state.adminUserModalTrigger = trigger || document.activeElement;
+  resetAdminUserForm();
+  const overlay = $("adminUserModalOverlay");
+  overlay?.classList.remove("hidden");
+  overlay?.setAttribute("aria-hidden", "false");
+  setTimeout(() => $("adminUserName")?.focus(), 0);
+}
+
+function openEditUserModal(trigger) {
+  const row = trigger?.closest("tr");
+  if (!row) return;
+  state.adminUserModalTrigger = trigger || document.activeElement;
+  populateModalFromRow(row);
+  const overlay = $("adminUserModalOverlay");
+  overlay?.classList.remove("hidden");
+  overlay?.setAttribute("aria-hidden", "false");
+  setTimeout(() => $("adminUserName")?.focus(), 0);
+}
+
+function closeModal() {
+  const overlay = $("adminUserModalOverlay");
+  overlay?.classList.add("hidden");
+  overlay?.setAttribute("aria-hidden", "true");
+  if (state.adminUserModalTrigger && typeof state.adminUserModalTrigger.focus === "function") {
+    state.adminUserModalTrigger.focus();
+  }
+  state.adminUserModalTrigger = null;
+}
+
+function submitModal() {
+  $("adminUserSave")?.click();
 }
 
 function renderAdminUsers() {
@@ -2826,8 +2880,20 @@ function renderAdminUsers() {
   tbody.innerHTML = state.adminUsers
     .map((user) => {
       const roles = formatRoleList(user.role_ids || [], "None");
+      const roleIds = (user.role_ids || []).map((value) => String(value)).join(",");
+      const profitCenterIds = (user.profit_center_ids || []).map((value) => String(value)).join(",");
+      const profitCenterGroups = (user.profit_center_groups || []).map((value) => String(value)).join(",");
       return `
-        <tr>
+        <tr
+          data-user-id="${user.id}"
+          data-user-name="${escapeHtml(user.name || "")}"
+          data-user-email="${escapeHtml(user.email || "")}"
+          data-active="${user.is_active ? "1" : "0"}"
+          data-admin="${user.is_admin ? "1" : "0"}"
+          data-roles="${roleIds}"
+          data-profit-center-ids="${profitCenterIds}"
+          data-profit-center-groups="${profitCenterGroups}"
+        >
           <td>${escapeHtml(user.name || "")}</td>
           <td>${escapeHtml(user.email || "")}</td>
           <td class="small">${escapeHtml(roles)}</td>
@@ -2840,9 +2906,7 @@ function renderAdminUsers() {
     .join("");
   document.querySelectorAll(".admin-user-edit").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const userId = Number(btn.dataset.userId);
-      const user = state.adminUsers.find((item) => item.id === userId);
-      if (user) openAdminUserEdit(user);
+      openEditUserModal(btn);
     });
   });
 }
@@ -3238,7 +3302,26 @@ async function loadAdminData() {
 
 function initAdminUi() {
   $("adminRefresh")?.addEventListener("click", loadAdminData);
-  $("adminUserCancel")?.addEventListener("click", resetAdminUserForm);
+  $("adminUserAdd")?.addEventListener("click", (event) => openAddUserModal(event.currentTarget));
+  $("adminUserCancel")?.addEventListener("click", () => {
+    resetAdminUserForm();
+    closeModal();
+  });
+  $("adminUserModalClose")?.addEventListener("click", closeModal);
+  $("adminUserForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitModal();
+  });
+  $("adminUserModalOverlay")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("adminUserModalOverlay")?.classList.contains("hidden")) {
+      closeModal();
+    }
+  });
   $("adminRoleCancel")?.addEventListener("click", resetAdminRoleForm);
   $("adminProfitCenterCancel")?.addEventListener("click", resetAdminProfitCenterForm);
   $("adminUserProfitCenterGroups")?.addEventListener("change", () => {
