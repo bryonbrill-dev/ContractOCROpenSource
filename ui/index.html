@@ -10,6 +10,14 @@
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    :root {
+      --sgh-green: #00A651;
+      --sgh-black: #1A1A1A;
+      --sgh-charcoal: #2C2C2C;
+      --sgh-light: #F5F5F5;
+      --sgh-slate: #707070;
+      --sgh-radius: 10px;
+    }
     body { font-family: Arial, sans-serif; margin: 20px; background: #f1f5f9; color: #0f172a; }
     body.theme-dark { background: #0f172a; color: #e2e8f0; }
     .row { display: flex; gap: 16px; }
@@ -25,18 +33,22 @@
     .red { background: #c62828; }
     .yellow { background: #b26a00; }
     .muted { color: #666; font-size: 12px; }
-    input, button, select { padding: 8px; }
+    input, select { padding: 8px; }
     input, select { border: 1px solid #111; border-radius: 6px; background: #fff; }
     input:focus, select:focus { outline: 2px solid #111; outline-offset: 1px; }
     button,
     input[type="button"],
     input[type="submit"],
     input[type="reset"] {
-      padding: 8px;
+      padding: 4px;
       line-height: 1.2;
       min-height: 26px;
       box-sizing: border-box;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
     }
     button { background: #0b3a6f; color: #fff; border: 1px solid #0b3a6f; border-radius: 6px; font-weight: 600; }
     button + button,
@@ -82,15 +94,12 @@
     .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #444; }
     .section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; background: #f8fafc; }
     details.section { padding: 8px 10px; }
-    details.section > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
-    details.section > summary::-webkit-details-marker { display: none; }
-    details.section > summary::marker { content: ""; }
-    details.legend > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
-    details.legend > summary::-webkit-details-marker { display: none; }
-    details.legend > summary::marker { content: ""; }
-    .summary-chevron { font-size: 25px; color: #64748b; transition: transform 0.2s ease; }
-    details.section[open] > summary .summary-chevron,
-    details.legend[open] > summary .summary-chevron { transform: rotate(90deg); }
+    details.section > summary::-webkit-details-marker,
+    details.legend > summary::-webkit-details-marker,
+    .planner-panel > summary::-webkit-details-marker { display: none; }
+    details.section > summary::marker,
+    details.legend > summary::marker,
+    .planner-panel > summary::marker { content: ""; }
     .summary-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: bold; font-size: 13px; }
     .summary-meta { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #6b7280; font-weight: normal; margin-left: auto; }
     .pill.tag { border-color: transparent; }
@@ -149,16 +158,10 @@
     .planner-more { font-size: 10px; color: #2563eb; }
     .planner-empty { min-height: 20px; }
     .planner-panel { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; margin-top: 10px; background: #f8fafc; }
-    .planner-panel > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .planner-panel > summary::-webkit-details-marker { display: none; }
-    .planner-panel > summary::marker { content: ""; }
     .planner-panel .panel-title { display: flex; align-items: baseline; gap: 8px; font-weight: 700; }
     .planner-panel .panel-title h4 { margin: 0; }
     .planner-panel .panel-meta { font-size: 12px; color: #6b7280; font-weight: 500; }
-    .planner-panel .panel-chevron { font-size: 18px; color: #64748b; transition: transform 0.2s ease; }
-    .planner-panel[open] .panel-chevron { transform: rotate(180deg); }
     .active-row { background: #fef9c3; }
-    .manual-term > summary { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px; }
     .event-date-group { background: #f8fafc; }
     .event-date-body { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
     .tour-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 2000; }
@@ -258,6 +261,69 @@
     .toast.warning { background: #b45309; }
     .toast .toast-close { background: transparent; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 0; }
     .toast-hide { opacity: 0; transform: translateY(8px); transition: opacity 0.2s ease, transform 0.2s ease; }
+    .sgh-collapsible-header {
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 12px 16px 12px 28px;
+      background: var(--sgh-light);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: var(--sgh-radius);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      cursor: pointer;
+      transition: background 160ms ease, box-shadow 160ms ease;
+    }
+    .sgh-collapsible-header::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 12px;
+      background: var(--sgh-green);
+    }
+    .sgh-collapsible-header:hover {
+      background: #efefef;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    }
+    .sgh-collapsible-header:focus,
+    .sgh-collapsible-header:focus-visible {
+      outline: 3px solid rgba(0, 166, 81, 0.28);
+      outline-offset: 2px;
+    }
+    .sgh-collapsible-header[aria-expanded="true"],
+    .sgh-collapsible-header.is-open {
+      background: rgba(0, 166, 81, 0.08);
+    }
+    .sgh-collapsible-title {
+      margin: 0;
+      color: var(--sgh-charcoal);
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .sgh-collapsible-subtitle {
+      margin-top: 3px;
+      color: var(--sgh-slate);
+      font-size: 13px;
+    }
+    .sgh-chevron {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      transition: transform 160ms ease;
+      color: var(--sgh-charcoal);
+    }
+    .sgh-collapsible-header[aria-expanded="true"] .sgh-chevron,
+    .sgh-collapsible-header.is-open .sgh-chevron {
+      transform: rotate(180deg);
+    }
+    details[open] > .sgh-collapsible-header .sgh-chevron {
+      transform: rotate(180deg);
+    }
   </style>
 </head>
 <body>
@@ -308,7 +374,10 @@
           </div>
           <div class="muted small" style="margin-top:6px">Showing 5 most recent processed contracts.</div>
           <details class="legend">
-            <summary class="small"><span class="summary-chevron" aria-hidden="true">▸</span><span class="summary-title">Color key</span></summary>
+            <summary class="sgh-collapsible-header">
+              <span class="summary-title sgh-collapsible-title">Color key</span>
+              <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
+            </summary>
             <div class="legend-grid">
               <div class="legend-item"><span class="badge green">processed</span> Completed processing</div>
               <div class="legend-item"><span class="badge yellow">processing</span> OCR in progress</div>
@@ -458,12 +527,12 @@
 
       <div class="muted small" id="plannerStatus" style="margin-top:4px"></div>
       <details class="planner-panel" open>
-        <summary>
+        <summary class="sgh-collapsible-header">
           <div class="panel-title">
-            <h4>Calendar View</h4>
-            <span class="panel-meta">Monthly event grid</span>
+            <h4 class="sgh-collapsible-title">Calendar View</h4>
+            <span class="panel-meta sgh-collapsible-subtitle">Monthly event grid</span>
           </div>
-          <span class="panel-chevron" aria-hidden="true">▾</span>
+          <span class="panel-chevron sgh-chevron" aria-hidden="true">▾</span>
         </summary>
         <div class="muted small" style="margin-top:6px;">Shows events on the selected month. Abbreviated contract names appear on each day.</div>
         <div id="plannerCalendar" class="planner-calendar"></div>
@@ -480,12 +549,12 @@
         </table>
       </details>
       <details class="planner-panel" style="margin-top:16px;">
-        <summary>
+        <summary class="sgh-collapsible-header">
           <div class="panel-title">
-            <h4>List View</h4>
-            <span class="panel-meta">Search and review timelines</span>
+            <h4 class="sgh-collapsible-title">List View</h4>
+            <span class="panel-meta sgh-collapsible-subtitle">Search and review timelines</span>
           </div>
-          <span class="panel-chevron" aria-hidden="true">▾</span>
+          <span class="panel-chevron sgh-chevron" aria-hidden="true">▾</span>
         </summary>
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px;">
           <div>
@@ -961,9 +1030,9 @@
       </div>
 
       <details class="section" open>
-        <summary>
-          <span class="summary-chevron" aria-hidden="true">▸</span>
-          <span class="summary-title">Users</span>
+        <summary class="sgh-collapsible-header">
+          <span class="summary-title sgh-collapsible-title">Users</span>
+          <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
         </summary>
         <div class="admin-user-controls" style="margin-top:6px;">
           <div class="muted small">Manage users for access and notifications.</div>
@@ -985,9 +1054,9 @@
       </details>
 
       <details class="section" open>
-        <summary>
-          <span class="summary-chevron" aria-hidden="true">▸</span>
-          <span class="summary-title">Roles</span>
+        <summary class="sgh-collapsible-header">
+          <span class="summary-title sgh-collapsible-title">Roles</span>
+          <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
         </summary>
         <div style="margin-top:6px;">
           <div class="row wrap">
@@ -1018,9 +1087,9 @@
       </details>
 
       <details class="section" open>
-        <summary>
-          <span class="summary-chevron" aria-hidden="true">▸</span>
-          <span class="summary-title">Tag permissions</span>
+        <summary class="sgh-collapsible-header">
+          <span class="summary-title sgh-collapsible-title">Tag permissions</span>
+          <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
         </summary>
         <div class="muted small" style="margin-top:6px;">
           Assign roles to restrict tag visibility. Leave a tag unchecked to keep it open to all users.
@@ -1039,9 +1108,9 @@
       </details>
 
       <details class="section" open>
-        <summary>
-          <span class="summary-chevron" aria-hidden="true">▸</span>
-          <span class="summary-title">Permissions matrix</span>
+        <summary class="sgh-collapsible-header">
+          <span class="summary-title sgh-collapsible-title">Permissions matrix</span>
+          <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
         </summary>
         <div class="muted small" style="margin-top:6px;">
           Assign roles for page access and actions. Permissions with no assigned roles follow their default access rules.
@@ -1061,9 +1130,9 @@
       </details>
 
       <details class="section" open>
-        <summary>
-          <span class="summary-chevron" aria-hidden="true">▸</span>
-          <span class="summary-title">Agreement types & keywords</span>
+        <summary class="sgh-collapsible-header">
+          <span class="summary-title sgh-collapsible-title">Agreement types & keywords</span>
+          <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
         </summary>
         <div class="muted small" style="margin-top:6px;">
           Maintain agreement type labels and the keywords used for auto-detection in searches.
@@ -1088,9 +1157,9 @@
       </details>
 
       <details class="section" open>
-        <summary>
-          <span class="summary-chevron" aria-hidden="true">▸</span>
-          <span class="summary-title">Profit centers</span>
+        <summary class="sgh-collapsible-header">
+          <span class="summary-title sgh-collapsible-title">Profit centers</span>
+          <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
         </summary>
         <div class="admin-user-controls" style="margin-top:6px;">
           <div class="muted small">Manage profit center numbers used to group department access.</div>

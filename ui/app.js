@@ -166,6 +166,21 @@ function showToast(message, { variant = "success", timeout = 30000 } = {}) {
   });
 }
 
+function initCollapsibleHeaders(root = document) {
+  root.querySelectorAll("details").forEach((detailsEl) => {
+    const summary = detailsEl.querySelector(":scope > summary.sgh-collapsible-header");
+    if (!summary) return;
+    const updateAria = () => {
+      summary.setAttribute("aria-expanded", detailsEl.open ? "true" : "false");
+    };
+    updateAria();
+    if (!detailsEl.dataset.sghCollapsibleBound) {
+      detailsEl.addEventListener("toggle", updateAria);
+      detailsEl.dataset.sghCollapsibleBound = "true";
+    }
+  });
+}
+
 function initModal() {
   const { overlay, confirm, cancel, close } = getModalElements();
   if (!overlay || !confirm || !cancel || !close) return;
@@ -1683,9 +1698,8 @@ function renderContractDetail(data) {
         .map(
           (t) => `
         <details class="section term-row ${t.status === "manual" ? "manual-term" : ""}" data-term="${t.term_key}">
-          <summary>
-            <span class="summary-chevron" aria-hidden="true">▸</span>
-            <span class="summary-title">
+          <summary class="sgh-collapsible-header">
+            <span class="summary-title sgh-collapsible-title">
               ${t.name || t.term_key}
               <span class="muted small">${t.term_key}</span>
               ${termEventLabel(t.term_key) ? `<span class="pill">${termEventLabel(t.term_key)} event</span>` : ""}
@@ -1694,6 +1708,7 @@ function renderContractDetail(data) {
               ${statusPill(t.status)}
               <span>${(t.confidence ?? 0).toFixed(2)}</span>
             </span>
+            <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
           </summary>
           <div class="row wrap" style="gap:8px; margin-top:6px;">
             <input class="muted-input term-value" type="text" value="${t.value_normalized || t.value_raw || ""}" />
@@ -1716,13 +1731,13 @@ function renderContractDetail(data) {
           const recipients = reminder?.recipients?.join(", ") || "";
           return `
           <details class="section" data-event="${e.id}">
-            <summary>
-              <span class="summary-chevron" aria-hidden="true">▸</span>
-              <span class="summary-title">
+            <summary class="sgh-collapsible-header">
+              <span class="summary-title sgh-collapsible-title">
                 ${eventTypePill(e.event_type)}
                 ${e.derived_from_term_key ? `<span class="pill">From ${e.derived_from_term_key}</span>` : ""}
               </span>
               <span class="summary-meta">${formatDate(e.event_date)}</span>
+              <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
             </summary>
             <div class="row wrap" style="gap:8px; margin-top:6px;">
               <input type="date" class="event-date" value="${(e.event_date || "").slice(0, 10)}" />
@@ -1760,9 +1775,9 @@ function renderContractDetail(data) {
       </div>
     </div>
     <details class="section">
-      <summary>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
-        <span class="summary-title">Profit Centers</span>
+      <summary class="sgh-collapsible-header">
+        <span class="summary-title sgh-collapsible-title">Profit Centers</span>
+        <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
       </summary>
       <div class="muted small" style="margin-top:6px;">
         ${isAdmin ? "Assign profit centers to control contract visibility." : "Assigned profit centers for this contract."}
@@ -1790,9 +1805,8 @@ function renderContractDetail(data) {
     </div>
 
     <details class="section" id="contractContent" open>
-      <summary>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
-        <span class="summary-title">Content Preview</span>
+      <summary class="sgh-collapsible-header">
+        <span class="summary-title sgh-collapsible-title">Content Preview</span>
         <span class="summary-meta">
           PDF or OCR text
           <span class="inline" style="gap:6px;">
@@ -1810,6 +1824,7 @@ function renderContractDetail(data) {
             Expand
           </button>
         </span>
+        <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
       </summary>
       <div class="preview-grid">
         <div class="preview-panel preview-panel-pdf">
@@ -1824,9 +1839,9 @@ function renderContractDetail(data) {
     </details>
 
     <details class="section">
-      <summary>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
-        <span class="summary-title">Tags</span>
+      <summary class="sgh-collapsible-header">
+        <span class="summary-title sgh-collapsible-title">Tags</span>
+        <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
       </summary>
       <div class="muted small">Create company-specific tags (e.g., BCBS, Deer Run) to group related contracts.</div>
       <div id="contractTags">${tagHtml}</div>
@@ -1842,9 +1857,9 @@ function renderContractDetail(data) {
     </details>
 
     <details class="section">
-      <summary>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
-        <span class="summary-title">Terms</span>
+      <summary class="sgh-collapsible-header">
+        <span class="summary-title sgh-collapsible-title">Terms</span>
+        <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
       </summary>
       ${termsHtml}
       <div class="section" style="margin-top:8px;">
@@ -1866,9 +1881,9 @@ function renderContractDetail(data) {
     </details>
 
     <details class="section">
-      <summary>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
-        <span class="summary-title">Events</span>
+      <summary class="sgh-collapsible-header">
+        <span class="summary-title sgh-collapsible-title">Events</span>
+        <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
       </summary>
       ${eventsHtml}
       <div class="section" style="margin-top:8px;">
@@ -1884,9 +1899,9 @@ function renderContractDetail(data) {
     </details>
 
     <details class="section">
-      <summary>
-        <span class="summary-chevron" aria-hidden="true">▸</span>
-        <span class="summary-title">Advanced Details</span>
+      <summary class="sgh-collapsible-header">
+        <span class="summary-title sgh-collapsible-title">Advanced Details</span>
+        <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
       </summary>
       <div style="margin-top:8px">Status: ${badge(c.status)}</div>
       <div style="margin-top:8px;">
@@ -1895,6 +1910,8 @@ function renderContractDetail(data) {
       </div>
     </details>
   `;
+
+  initCollapsibleHeaders($("detail"));
 
   $("togglePreviewFullscreen")?.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -2407,9 +2424,8 @@ function renderEvents() {
 
           return `
             <details class="section event-contract" data-contract="${contract.contractId}">
-              <summary>
-                <span class="summary-chevron" aria-hidden="true">▸</span>
-                <span class="summary-title">
+              <summary class="sgh-collapsible-header">
+                <span class="summary-title sgh-collapsible-title">
                   <button type="button" class="link-button open-contract" data-id="${contract.contractId}">
                     ${contract.title}
                   </button>
@@ -2419,6 +2435,7 @@ function renderEvents() {
                   ${contract.agreement_type ? `<span class="pill">${contract.agreement_type}</span>` : ""}
                   <span class="pill">${contract.events.length} event${contract.events.length === 1 ? "" : "s"}</span>
                 </span>
+                <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
               </summary>
               <div class="event-contract-body">
                 ${eventsHtml}
@@ -2430,10 +2447,10 @@ function renderEvents() {
 
       return `
         <details class="section event-date-group"${groupIndex === 0 ? " open" : ""}>
-          <summary>
-            <span class="summary-chevron" aria-hidden="true">▸</span>
-            <span class="summary-title">${formatDate(group.date)}</span>
+          <summary class="sgh-collapsible-header">
+            <span class="summary-title sgh-collapsible-title">${formatDate(group.date)}</span>
             <span class="summary-meta">${group.contracts.size} contract${group.contracts.size === 1 ? "" : "s"}</span>
+            <span class="summary-chevron sgh-chevron" aria-hidden="true">▸</span>
           </summary>
           <div class="event-date-body">
             ${contractsHtml}
@@ -2442,6 +2459,8 @@ function renderEvents() {
       `;
     })
     .join("");
+
+  initCollapsibleHeaders(list);
 
   if (status) {
     status.textContent = `Showing ${filtered.length} event${filtered.length === 1 ? "" : "s"} across ${dateGroupList.length} date${dateGroupList.length === 1 ? "" : "s"}.`;
@@ -5099,6 +5118,7 @@ initThemeToggle();
 initPreviewFullscreen();
 initGuidedTours();
 initAdminUi();
+initCollapsibleHeaders();
 showPage("contracts");
 
 async function loadAppData() {
