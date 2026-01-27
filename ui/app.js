@@ -186,7 +186,9 @@ function initSidebarToggle() {
   if (!toggleButton) return;
   const applyState = (collapsed) => {
     document.body.classList.toggle("sidebar-collapsed", collapsed);
-    toggleButton.textContent = collapsed ? "Show menu" : "Hide menu";
+    const label = collapsed ? "Show menu" : "Hide menu";
+    toggleButton.setAttribute("aria-label", label);
+    toggleButton.setAttribute("title", label);
     toggleButton.setAttribute("aria-pressed", collapsed ? "true" : "false");
   };
   const stored = window.localStorage.getItem("sidebarCollapsed");
