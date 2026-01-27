@@ -63,6 +63,24 @@
     input[type="reset"] + input[type="reset"] { margin-left: 6px; }
     button:hover { background: #f28c28; border-color: #f28c28; color: #fff; }
     button:focus { outline: 2px solid #ffffff; outline-offset: 1px; box-shadow: 0 0 0 3px rgba(11, 58, 111, 0.35); }
+    .app-main button,
+    .app-main input[type="button"],
+    .app-main input[type="submit"],
+    .app-main input[type="reset"] {
+      padding: 8px 12px;
+      min-height: 34px;
+      line-height: 1;
+      font-size: 13px;
+      border-radius: 8px;
+      gap: 6px;
+    }
+    .app-main button:focus,
+    .app-main input[type="button"]:focus,
+    .app-main input[type="submit"]:focus,
+    .app-main input[type="reset"]:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(11, 58, 111, 0.25);
+    }
     a { text-decoration: underline; color: #1d4ed8; font-weight: 600; }
     .small { font-size: 12px; }
     pre { white-space: pre-wrap; word-break: break-word; }
