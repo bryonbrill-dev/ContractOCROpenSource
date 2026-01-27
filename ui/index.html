@@ -104,6 +104,11 @@
     .profit-center-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; font-size: 12px; }
     .profit-center-group { font-weight: 700; color: #0f172a; min-width: 120px; }
     .profit-center-items { color: #334155; }
+    .profit-center-group-list { display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto; padding: 4px; border: 1px solid #e5e7eb; border-radius: 10px; background: #f8fafc; }
+    .profit-center-group-block { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; background: #ffffff; }
+    .profit-center-group-title { font-weight: 700; font-size: 12px; color: #0f172a; padding-bottom: 4px; border-bottom: 1px solid #e2e8f0; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+    .profit-center-checkboxes { display: flex; flex-direction: column; gap: 6px; }
+    .profit-center-checkboxes label { display: inline-flex; align-items: center; gap: 6px; }
     .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 999px; border: 1px solid #94a3b8; color: #475569; font-size: 11px; line-height: 1; cursor: help; }
     .label-with-info { display: inline-flex; align-items: center; gap: 6px; }
     .preview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
@@ -200,6 +205,9 @@
     body.theme-dark .section ul { color: #cbd5f5; }
     body.theme-dark .profit-center-group { color: #e2e8f0; }
     body.theme-dark .profit-center-items { color: #94a3b8; }
+    body.theme-dark .profit-center-group-list { border-color: #334155; background: #0b1220; }
+    body.theme-dark .profit-center-group-block { border-color: #334155; background: #0f172a; }
+    body.theme-dark .profit-center-group-title { color: #e2e8f0; border-bottom-color: #334155; }
     body.theme-dark .planner-cell { background: #0f172a; }
     body.theme-dark .planner-header { background: #1e293b; }
     body.theme-dark .planner-entry { background: #111827; border-color: #1f2937; color: #e2e8f0; }

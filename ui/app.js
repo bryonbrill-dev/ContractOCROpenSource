@@ -1630,38 +1630,40 @@ function renderContractDetail(data) {
     : `<div class="muted small">No tags yet.</div>`;
 
   const profitCenterOptionsHtml = availableProfitCenters.length
-    ? Object.entries(
-        availableProfitCenters.reduce((grouped, center) => {
-          const group = center.group_name || "Ungrouped";
-          if (!grouped[group]) grouped[group] = [];
-          grouped[group].push(center);
-          return grouped;
-        }, {}),
-      )
-        .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
-        .map(([groupName, centers]) => {
-          const centerOptions = centers
-            .map((center) => {
-              const label = `${center.code} — ${center.name}`;
-              const checked = assignedProfitCenterIds.has(String(center.id)) ? "checked" : "";
-              return `
-                <label class="inline small" style="gap:6px;">
-                  <input type="checkbox" value="${center.id}" ${checked} />
-                  <span>${escapeHtml(label)}</span>
-                </label>
-              `;
-            })
-            .join("");
-          return `
-            <div style="margin-top:8px;">
-              <div class="small muted">${escapeHtml(groupName)}</div>
-              <div class="row wrap" style="gap:8px; margin-top:6px;">
-                ${centerOptions}
+    ? `<div class="profit-center-group-list">
+        ${Object.entries(
+          availableProfitCenters.reduce((grouped, center) => {
+            const group = center.group_name || "Ungrouped";
+            if (!grouped[group]) grouped[group] = [];
+            grouped[group].push(center);
+            return grouped;
+          }, {}),
+        )
+          .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
+          .map(([groupName, centers]) => {
+            const centerOptions = centers
+              .map((center) => {
+                const label = `${center.code} — ${center.name}`;
+                const checked = assignedProfitCenterIds.has(String(center.id)) ? "checked" : "";
+                return `
+                  <label class="inline small" style="gap:6px;">
+                    <input type="checkbox" value="${center.id}" ${checked} />
+                    <span>${escapeHtml(label)}</span>
+                  </label>
+                `;
+              })
+              .join("");
+            return `
+              <div class="profit-center-group-block">
+                <div class="profit-center-group-title">${escapeHtml(groupName)}</div>
+                <div class="profit-center-checkboxes">
+                  ${centerOptions}
+                </div>
               </div>
-            </div>
-          `;
-        })
-        .join("")
+            `;
+          })
+          .join("")}
+      </div>`
     : `<div class="muted small">No profit centers configured yet.</div>`;
 
   const termSummaryItems = terms.map((t) => {
