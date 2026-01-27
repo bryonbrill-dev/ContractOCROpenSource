@@ -28,7 +28,27 @@
     input, button, select { padding: 8px; }
     input, select { border: 1px solid #111; border-radius: 6px; background: #fff; }
     input:focus, select:focus { outline: 2px solid #111; outline-offset: 1px; }
-    button { cursor: pointer; background: #0b3a6f; color: #fff; border: 1px solid #0b3a6f; border-radius: 6px; font-weight: 600; }
+    button,
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"] {
+      padding: 3px 10px;
+      line-height: 1.2;
+      min-height: 26px;
+      box-sizing: border-box;
+      cursor: pointer;
+    }
+    button { background: #0b3a6f; color: #fff; border: 1px solid #0b3a6f; border-radius: 6px; font-weight: 600; }
+    button + button,
+    button + input[type="button"],
+    button + input[type="submit"],
+    button + input[type="reset"],
+    input[type="button"] + button,
+    input[type="submit"] + button,
+    input[type="reset"] + button,
+    input[type="button"] + input[type="button"],
+    input[type="submit"] + input[type="submit"],
+    input[type="reset"] + input[type="reset"] { margin-left: 6px; }
     button:hover { background: #f28c28; border-color: #f28c28; color: #fff; }
     button:focus { outline: 2px solid #ffffff; outline-offset: 1px; box-shadow: 0 0 0 3px rgba(11, 58, 111, 0.35); }
     a { text-decoration: underline; color: #1d4ed8; font-weight: 600; }
@@ -78,7 +98,7 @@
     .inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .muted-input { width: 100%; box-sizing: border-box; }
     .chip-btn { background: none; border: none; cursor: pointer; color: #b91c1c; margin-left: 6px; }
-    .link-button { background: none; border: none; color: #1d4ed8; cursor: pointer; font-weight: 600; padding: 0; }
+    .link-button { background: none; border: none; color: #1d4ed8; cursor: pointer; font-weight: 600; }
     .link-button:hover { text-decoration: underline; }
     .profit-center-summary { display: flex; flex-direction: column; gap: 6px; }
     .profit-center-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; font-size: 12px; }
@@ -202,6 +222,26 @@
     body.theme-dark #authOverlay .border-slate-200 { border-color: #1f2937; }
     .multi-select { width: 100%; min-height: 180px; max-height: 240px; }
     .multi-select option { padding: 4px; }
+    .admin-user-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .admin-user-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 2100; }
+    .admin-user-modal { background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25); width: 100%; max-width: 1100px; max-height: calc(100vh - 40px); overflow: auto; padding: 20px; }
+    .admin-user-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .admin-user-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+    .admin-user-section { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f8fafc; }
+    .admin-user-section h5 { margin: 0 0 10px 0; font-size: 13px; }
+    .admin-user-field-row { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; align-items: center; margin-bottom: 8px; }
+    .admin-user-field-row label { font-size: 12px; font-weight: 600; color: #475569; }
+    .admin-user-checkboxes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+    .admin-user-scroll { border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px; background: #ffffff; height: 220px; overflow: auto; }
+    .admin-user-scroll .multi-select { min-height: 100%; max-height: none; height: 100%; }
+    .admin-user-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    @media (max-width: 960px) {
+      .admin-user-grid { grid-template-columns: 1fr; }
+    }
+    body.theme-dark .admin-user-modal { background: #0f172a; border-color: #1f2937; }
+    body.theme-dark .admin-user-section { background: #0b1220; border-color: #1f2937; }
+    body.theme-dark .admin-user-field-row label { color: #cbd5f5; }
+    body.theme-dark .admin-user-scroll { background: #0f172a; border-color: #1f2937; }
     .toast-container { position: fixed; left: 20px; bottom: 20px; z-index: 3000; display: flex; flex-direction: column; gap: 10px; }
     .toast { background: #0f172a; color: #f8fafc; border-radius: 10px; padding: 12px 14px; min-width: 240px; max-width: 360px; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .toast.success { background: #166534; }
@@ -913,53 +953,9 @@
 
       <div class="section">
         <h4>Users</h4>
-        <div class="row wrap">
-          <label class="col small">Name
-            <input id="adminUserName" class="muted-input" placeholder="Full name" />
-          </label>
-          <label class="col small">Email
-            <input id="adminUserEmail" class="muted-input" placeholder="email@company.com" />
-          </label>
-          <label class="col small">Password
-            <input id="adminUserPassword" class="muted-input" type="password" placeholder="Set or reset password" />
-          </label>
-        </div>
-        <div class="row wrap" style="margin-top:8px;">
-          <label class="inline small"><input id="adminUserActive" type="checkbox" checked /> Active</label>
-          <label class="inline small"><input id="adminUserAdmin" type="checkbox" /> Admin</label>
-        </div>
-        <div class="small muted" style="margin-top:8px;">Assign roles</div>
-        <div id="adminUserRoles" class="row wrap" style="margin-top:6px;"></div>
-        <details class="section" open style="margin-top:12px;">
-          <summary class="small">
-            <span class="summary-chevron" aria-hidden="true">▸</span>
-            <span class="summary-title">Assign profit center groups</span>
-          </summary>
-          <select
-            id="adminUserProfitCenterGroups"
-            class="multi-select"
-            multiple
-            size="6"
-            style="margin-top:6px;"
-          ></select>
-        </details>
-        <details class="section" open style="margin-top:12px;">
-          <summary class="small">
-            <span class="summary-chevron" aria-hidden="true">▸</span>
-            <span class="summary-title">Assign profit centers</span>
-          </summary>
-          <select
-            id="adminUserProfitCenters"
-            class="multi-select"
-            multiple
-            size="8"
-            style="margin-top:6px;"
-          ></select>
-        </details>
-        <div class="row wrap" style="margin-top:8px;">
-          <button id="adminUserSave">Add user</button>
-          <button id="adminUserCancel" class="link-button" type="button">Cancel</button>
-          <div id="adminUserStatus" class="muted small"></div>
+        <div class="admin-user-controls">
+          <div class="muted small">Manage users for access and notifications.</div>
+          <button id="adminUserAdd" type="button">Add User</button>
         </div>
         <table class="compact-table" style="margin-top:10px;">
           <thead>
@@ -1489,6 +1485,67 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
         <button id="authMicrosoftButton" type="button" class="hidden mt-3 w-full">
           Sign in with Microsoft
         </button>
+      </form>
+    </div>
+  </div>
+
+  <div id="adminUserModalOverlay" class="hidden admin-user-modal-overlay" aria-hidden="true">
+    <div class="admin-user-modal" role="dialog" aria-modal="true" aria-labelledby="adminUserModalTitle" tabindex="-1">
+      <div class="admin-user-modal-header">
+        <h3 id="adminUserModalTitle" style="margin:0;">Add User</h3>
+        <button id="adminUserModalClose" class="text-xl text-slate-400 hover:text-slate-600" aria-label="Close dialog">×</button>
+      </div>
+      <form id="adminUserForm" autocomplete="off">
+        <div class="admin-user-grid">
+          <section class="admin-user-section">
+            <h5>Details</h5>
+            <div class="admin-user-field-row">
+              <label for="adminUserName">Full Name</label>
+              <input id="adminUserName" class="muted-input" placeholder="Full name" />
+            </div>
+            <div class="admin-user-field-row">
+              <label for="adminUserEmail">Email</label>
+              <input id="adminUserEmail" class="muted-input" placeholder="email@company.com" />
+            </div>
+            <div class="admin-user-field-row">
+              <label for="adminUserPassword">Password</label>
+              <input id="adminUserPassword" class="muted-input" type="password" placeholder="Set password" />
+            </div>
+            <div class="admin-user-checkboxes small">
+              <label class="inline small"><input id="adminUserActive" type="checkbox" checked /> Active</label>
+              <label class="inline small"><input id="adminUserAdmin" type="checkbox" /> Admin</label>
+            </div>
+            <div class="small muted" style="margin-top:10px;">Assigned roles</div>
+            <div id="adminUserRoles" class="row wrap" style="margin-top:6px;"></div>
+            <div id="adminUserStatus" class="muted small" style="margin-top:8px;"></div>
+          </section>
+          <section class="admin-user-section">
+            <h5>Assign profit center groups</h5>
+            <div class="admin-user-scroll">
+              <select
+                id="adminUserProfitCenterGroups"
+                class="multi-select"
+                multiple
+                size="8"
+              ></select>
+            </div>
+          </section>
+          <section class="admin-user-section">
+            <h5>Assign profit centers</h5>
+            <div class="admin-user-scroll">
+              <select
+                id="adminUserProfitCenters"
+                class="multi-select"
+                multiple
+                size="10"
+              ></select>
+            </div>
+          </section>
+        </div>
+        <div class="admin-user-actions">
+          <button id="adminUserSave" type="button">Save</button>
+          <button id="adminUserCancel" class="link-button" type="button">Cancel</button>
+        </div>
       </form>
     </div>
   </div>
