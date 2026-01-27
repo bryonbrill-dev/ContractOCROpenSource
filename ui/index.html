@@ -18,7 +18,7 @@
       --sgh-slate: #707070;
       --sgh-radius: 10px;
     }
-    body { font-family: Arial, sans-serif; margin: 20px; background: #f1f5f9; color: #0f172a; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #f1f5f9; color: #0f172a; }
     body.theme-dark { background: #0f172a; color: #e2e8f0; }
     .row { display: flex; gap: 16px; }
     .row.wrap { flex-wrap: wrap; }
@@ -67,10 +67,85 @@
     .small { font-size: 12px; }
     pre { white-space: pre-wrap; word-break: break-word; }
     .hidden { display: none; }
-    .nav { display: flex; gap: 10px; margin: 12px 0; }
-    .nav button { border: 1px solid #0b3a6f; background: #ffffff; color: #0b3a6f; padding: 10px 14px; border-radius: 6px; font-weight: bold; }
-    .nav button:hover { background: #f28c28; border-color: #f28c28; color: #ffffff; }
-    .nav button.active { background: #0b3a6f; border-color: #0b3a6f; color: #ffffff; }
+    .app-shell { display: flex; min-height: 100vh; }
+    .app-main { flex: 1; padding: 20px; }
+    .sidebar {
+      width: 240px;
+      background: var(--sgh-black);
+      color: #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .sidebar-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .sidebar-toggle {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: #e2e8f0;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+    .sidebar-toggle:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.35); }
+    .nav { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+    .nav button {
+      border: 1px solid transparent;
+      background: transparent;
+      color: #e2e8f0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      justify-content: flex-start;
+    }
+    .nav button:hover { background: rgba(0, 166, 81, 0.12); border-color: rgba(0, 166, 81, 0.4); color: #f8fafc; }
+    .nav button.active { background: rgba(0, 166, 81, 0.18); border-color: var(--sgh-green); color: #ffffff; }
+    .nav-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.12);
+      flex-shrink: 0;
+    }
+    .nav-icon svg { width: 16px; height: 16px; }
+    .icon-contracts { color: #22c55e; background: rgba(34, 197, 94, 0.18); }
+    .icon-all { color: #38bdf8; background: rgba(56, 189, 248, 0.18); }
+    .icon-planner { color: #fbbf24; background: rgba(251, 191, 36, 0.18); }
+    .icon-pending { color: #f97316; background: rgba(249, 115, 22, 0.18); }
+    .icon-tasks { color: #a855f7; background: rgba(168, 85, 247, 0.18); }
+    .icon-notifications { color: #60a5fa; background: rgba(96, 165, 250, 0.18); }
+    .icon-admin { color: #f472b6; background: rgba(244, 114, 182, 0.18); }
+    .icon-support { color: #94a3b8; background: rgba(148, 163, 184, 0.18); }
+    .nav-label { white-space: nowrap; }
+    .sidebar-footer { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+    .sidebar-collapsed .sidebar { width: 80px; padding: 16px 10px; }
+    .sidebar-collapsed .sidebar .nav-label,
+    .sidebar-collapsed .sidebar .sidebar-title { display: none; }
+    .sidebar-collapsed .sidebar .sidebar-toggle { width: 100%; }
+    .sidebar-collapsed .sidebar .nav button { justify-content: center; }
+    .sidebar-collapsed .sidebar .nav-icon { margin: 0; }
     .folder-list { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
     .folder-card { border: 1px solid #dce1ff; border-radius: 10px; background: linear-gradient(135deg, #f8f9ff, #ffffff); box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
     .folder-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid #e6e9ff; }
@@ -191,14 +266,20 @@
     .queue-expanded .queue-scroll { max-height: calc(100vh - 260px); }
     .queue-fullscreen { overflow: hidden; }
     .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-logo { width: 120px; height: auto; display: block; }
+    .brand-text { display: flex; flex-direction: column; gap: 2px; }
+    .brand-text span { font-weight: 700; font-size: 18px; }
+    .brand-text small { color: #64748b; font-weight: 600; }
     .theme-toggle { display: inline-flex; align-items: center; gap: 8px; }
     .auth-bar { display: inline-flex; align-items: center; gap: 8px; }
     .theme-toggle button { background: #ffffff; color: #0b3a6f; border-color: #0b3a6f; }
     .theme-toggle button:hover { background: #f28c28; border-color: #f28c28; color: #ffffff; }
     body.theme-dark .card { background: #111827; border-color: #1f2937; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.35); }
     body.theme-dark .drop { background: #0b1220; border-color: #475569; }
-    body.theme-dark .nav button { background: #0f172a; color: #e2e8f0; border-color: #60a5fa; }
-    body.theme-dark .nav button.active { background: #2563eb; border-color: #2563eb; color: #ffffff; }
+    body.theme-dark .sidebar { background: #0b1220; }
+    body.theme-dark .nav button { color: #e2e8f0; }
+    body.theme-dark .nav button.active { border-color: #22c55e; color: #ffffff; }
     body.theme-dark input, body.theme-dark select { background: #0f172a; color: #e2e8f0; border-color: #475569; }
     body.theme-dark table th, body.theme-dark table td { border-bottom: 1px solid #1f2937; }
     body.theme-dark a { color: #93c5fd; }
@@ -327,31 +408,123 @@
   </style>
 </head>
 <body>
-  <div class="top-bar">
-    <h2>ContractOCR</h2>
-    <div class="inline" style="gap:16px;">
-      <div class="auth-bar">
-        <span class="small muted" id="authStatus">Not signed in</span>
-        <button id="authLoginButton" type="button">Sign in</button>
-        <button id="authLogoutButton" type="button" class="hidden">Sign out</button>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary">
+      <div class="sidebar-header">
+        <div class="sidebar-title">
+          <span>Navigation</span>
+          <span class="small muted">ContractOCR</span>
+        </div>
+        <button id="sidebarToggle" class="sidebar-toggle" type="button">Hide menu</button>
       </div>
-      <div class="theme-toggle">
-        <span class="small muted" id="themeLabel">Theme: Light</span>
-        <button id="themeToggle" type="button">Switch to Dark Theme</button>
+      <div class="nav">
+        <button id="navContracts" class="active">
+          <span class="nav-icon icon-contracts" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3h7l4 4v14H8z"></path>
+              <path d="M15 3v5h5"></path>
+              <path d="M10 13h6"></path>
+              <path d="M10 17h6"></path>
+            </svg>
+          </span>
+          <span class="nav-label">Contracts</span>
+        </button>
+        <button id="navAllContracts">
+          <span class="nav-icon icon-all" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="7" y="3" width="10" height="6" rx="1"></rect>
+              <rect x="5" y="9" width="14" height="6" rx="1"></rect>
+              <rect x="3" y="15" width="18" height="6" rx="1"></rect>
+            </svg>
+          </span>
+          <span class="nav-label">All Contracts</span>
+        </button>
+        <button id="navPlanner">
+          <span class="nav-icon icon-planner" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="5" width="18" height="16" rx="2"></rect>
+              <path d="M8 3v4"></path>
+              <path d="M16 3v4"></path>
+              <path d="M3 11h18"></path>
+            </svg>
+          </span>
+          <span class="nav-label">Planner</span>
+        </button>
+        <button id="navPendingAgreements">
+          <span class="nav-icon icon-pending" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="8"></circle>
+              <path d="M12 8v5l3 2"></path>
+            </svg>
+          </span>
+          <span class="nav-label">Pending Agreements</span>
+        </button>
+        <button id="navTasks">
+          <span class="nav-icon icon-tasks" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 11l2 2 4-4"></path>
+              <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+            </svg>
+          </span>
+          <span class="nav-label">Tasks</span>
+        </button>
+        <button id="navNotifications">
+          <span class="nav-icon icon-notifications" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5"></path>
+              <path d="M9 17a3 3 0 0 0 6 0"></path>
+            </svg>
+          </span>
+          <span class="nav-label">Notifications</span>
+        </button>
+        <button id="navAdmin">
+          <span class="nav-icon icon-admin" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="9" cy="8" r="3"></circle>
+              <circle cx="17" cy="10" r="2"></circle>
+              <path d="M4 19c0-3 2.5-5 5-5s5 2 5 5"></path>
+              <path d="M14 19c0-2 1.5-3 3-3s3 1 3 3"></path>
+            </svg>
+          </span>
+          <span class="nav-label">Admin</span>
+        </button>
+        <button id="navOutputs">
+          <span class="nav-icon icon-support" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 6a6 6 0 0 1 6 6v5a1 1 0 0 1-1 1h-1a3 3 0 0 1-6 0H8a3 3 0 0 1-6 0V12a6 6 0 0 1 6-6"></path>
+              <path d="M8 12h.01"></path>
+              <path d="M16 12h.01"></path>
+            </svg>
+          </span>
+          <span class="nav-label">Support Page</span>
+        </button>
       </div>
-    </div>
-  </div>
+      <div class="sidebar-footer">
+        <span class="small muted">Signed in controls stay role-based.</span>
+      </div>
+    </aside>
 
-  <div class="nav">
-    <button id="navContracts" class="active">Contracts</button>
-    <button id="navAllContracts">All Contracts</button>
-    <button id="navPlanner">Planner</button>
-    <button id="navPendingAgreements">Pending Agreements</button>
-    <button id="navTasks">Tasks</button>
-    <button id="navNotifications">Notifications</button>
-    <button id="navAdmin">Admin</button>
-    <button id="navOutputs">Support Page</button>
-  </div>
+    <main class="app-main">
+      <div class="top-bar">
+        <div class="brand">
+          <img src="assets/lexify-logo.svg" alt="Lexify ContractOCR logo" class="brand-logo" />
+          <div class="brand-text">
+            <span>ContractOCR</span>
+            <small>Agreement Management</small>
+          </div>
+        </div>
+        <div class="inline" style="gap:16px;">
+          <div class="auth-bar">
+            <span class="small muted" id="authStatus">Not signed in</span>
+            <button id="authLoginButton" type="button">Sign in</button>
+            <button id="authLogoutButton" type="button" class="hidden">Sign out</button>
+          </div>
+          <div class="theme-toggle">
+            <span class="small muted" id="themeLabel">Theme: Light</span>
+            <button id="themeToggle" type="button">Switch to Dark Theme</button>
+          </div>
+        </div>
+      </div>
 
   <div id="contractsPage">
     <div class="contracts-layout" style="margin-top:16px">
@@ -1664,6 +1837,9 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
         </div>
       </form>
     </div>
+  </div>
+
+    </main>
   </div>
 
   <script src="config.js"></script>
