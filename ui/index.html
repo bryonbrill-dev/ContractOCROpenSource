@@ -32,7 +32,7 @@
     input[type="button"],
     input[type="submit"],
     input[type="reset"] {
-      padding: 3px 10px;
+      padding: 4px;
       line-height: 1.2;
       min-height: 26px;
       box-sizing: border-box;
@@ -225,6 +225,7 @@
     .admin-user-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     .admin-user-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 2100; }
     .admin-user-modal { background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25); width: 100%; max-width: 1100px; max-height: calc(100vh - 40px); overflow: auto; padding: 20px; }
+    .admin-profit-center-modal { max-width: 720px; }
     .admin-user-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
     .admin-user-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
     .admin-user-section { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f8fafc; }
@@ -951,9 +952,12 @@
         </div>
       </div>
 
-      <div class="section">
-        <h4>Users</h4>
-        <div class="admin-user-controls">
+      <details class="section" open>
+        <summary>
+          <span class="summary-chevron" aria-hidden="true">▸</span>
+          <span class="summary-title">Users</span>
+        </summary>
+        <div class="admin-user-controls" style="margin-top:6px;">
           <div class="muted small">Manage users for access and notifications.</div>
           <button id="adminUserAdd" type="button">Add User</button>
         </div>
@@ -970,38 +974,46 @@
           </thead>
           <tbody id="adminUsersTable"></tbody>
         </table>
-      </div>
+      </details>
 
-      <div class="section">
-        <h4>Roles</h4>
-        <div class="row wrap">
-          <label class="col small">Role name
-            <input id="adminRoleName" class="muted-input" placeholder="e.g., Legal" />
-          </label>
-          <label class="col small">Description
-            <input id="adminRoleDescription" class="muted-input" placeholder="Optional description" />
-          </label>
+      <details class="section" open>
+        <summary>
+          <span class="summary-chevron" aria-hidden="true">▸</span>
+          <span class="summary-title">Roles</span>
+        </summary>
+        <div style="margin-top:6px;">
+          <div class="row wrap">
+            <label class="col small">Role name
+              <input id="adminRoleName" class="muted-input" placeholder="e.g., Legal" />
+            </label>
+            <label class="col small">Description
+              <input id="adminRoleDescription" class="muted-input" placeholder="Optional description" />
+            </label>
+          </div>
+          <div class="row wrap" style="margin-top:8px;">
+            <button id="adminRoleSave">Add role</button>
+            <button id="adminRoleCancel" class="link-button" type="button">Cancel</button>
+            <div id="adminRoleStatus" class="muted small"></div>
+          </div>
+          <table class="compact-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>Description</th>
+                <th></th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="adminRolesTable"></tbody>
+          </table>
         </div>
-        <div class="row wrap" style="margin-top:8px;">
-          <button id="adminRoleSave">Add role</button>
-          <button id="adminRoleCancel" class="link-button" type="button">Cancel</button>
-          <div id="adminRoleStatus" class="muted small"></div>
-        </div>
-        <table class="compact-table" style="margin-top:10px;">
-          <thead>
-            <tr>
-              <th>Role</th>
-              <th>Description</th>
-              <th></th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="adminRolesTable"></tbody>
-        </table>
-      </div>
+      </details>
 
-      <div class="section">
-        <h4>Tag permissions</h4>
+      <details class="section" open>
+        <summary>
+          <span class="summary-chevron" aria-hidden="true">▸</span>
+          <span class="summary-title">Tag permissions</span>
+        </summary>
         <div class="muted small" style="margin-top:6px;">
           Assign roles to restrict tag visibility. Leave a tag unchecked to keep it open to all users.
         </div>
@@ -1016,10 +1028,13 @@
           <tbody id="adminTagPermissionsTable"></tbody>
         </table>
         <div id="adminTagStatus" class="muted small" style="margin-top:6px;"></div>
-      </div>
+      </details>
 
-      <div class="section">
-        <h4>Permissions matrix</h4>
+      <details class="section" open>
+        <summary>
+          <span class="summary-chevron" aria-hidden="true">▸</span>
+          <span class="summary-title">Permissions matrix</span>
+        </summary>
         <div class="muted small" style="margin-top:6px;">
           Assign roles for page access and actions. Permissions with no assigned roles follow their default access rules.
         </div>
@@ -1035,10 +1050,13 @@
           <tbody id="adminPermissionMatrixTable"></tbody>
         </table>
         <div id="adminPermissionStatus" class="muted small" style="margin-top:6px;"></div>
-      </div>
+      </details>
 
-      <div class="section">
-        <h4>Agreement types & keywords</h4>
+      <details class="section" open>
+        <summary>
+          <span class="summary-chevron" aria-hidden="true">▸</span>
+          <span class="summary-title">Agreement types & keywords</span>
+        </summary>
         <div class="muted small" style="margin-top:6px;">
           Maintain agreement type labels and the keywords used for auto-detection in searches.
         </div>
@@ -1059,28 +1077,16 @@
           </thead>
           <tbody id="adminAgreementTypesTable"></tbody>
         </table>
-      </div>
+      </details>
 
-      <div class="section">
-        <h4>Profit centers</h4>
-        <div class="muted small" style="margin-top:6px;">
-          Manage profit center numbers used to group department access.
-        </div>
-        <div class="row wrap" style="margin-top:10px;">
-          <label class="col small">Profit center code
-            <input id="adminProfitCenterCode" class="muted-input" placeholder="e.g., 1200" />
-          </label>
-          <label class="col small">Profit center name
-            <input id="adminProfitCenterName" class="muted-input" placeholder="e.g., Commercial Sales & Supply" />
-          </label>
-          <label class="col small">Parent group
-            <input id="adminProfitCenterGroup" class="muted-input" placeholder="e.g., Transportation" />
-          </label>
-        </div>
-        <div class="row wrap" style="margin-top:8px;">
-          <button id="adminProfitCenterSave">Add profit center</button>
-          <button id="adminProfitCenterCancel" class="link-button" type="button">Cancel</button>
-          <div id="adminProfitCenterStatus" class="muted small"></div>
+      <details class="section" open>
+        <summary>
+          <span class="summary-chevron" aria-hidden="true">▸</span>
+          <span class="summary-title">Profit centers</span>
+        </summary>
+        <div class="admin-user-controls" style="margin-top:6px;">
+          <div class="muted small">Manage profit center numbers used to group department access.</div>
+          <button id="adminProfitCenterAdd" type="button">Add profit center</button>
         </div>
         <table class="compact-table" style="margin-top:10px;">
           <thead>
@@ -1093,7 +1099,7 @@
           </thead>
           <tbody id="adminProfitCentersTable"></tbody>
         </table>
-      </div>
+      </details>
     </div>
   </div>
 
@@ -1545,6 +1551,39 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
         <div class="admin-user-actions">
           <button id="adminUserSave" type="button">Save</button>
           <button id="adminUserCancel" class="link-button" type="button">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="adminProfitCenterModalOverlay" class="hidden admin-user-modal-overlay" aria-hidden="true">
+    <div
+      class="admin-user-modal admin-profit-center-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="adminProfitCenterModalTitle"
+      tabindex="-1"
+    >
+      <div class="admin-user-modal-header">
+        <h3 id="adminProfitCenterModalTitle" style="margin:0;">Add profit center</h3>
+        <button id="adminProfitCenterModalClose" class="text-xl text-slate-400 hover:text-slate-600" aria-label="Close dialog">×</button>
+      </div>
+      <form id="adminProfitCenterForm" autocomplete="off">
+        <div class="row wrap">
+          <label class="col small">Profit center code
+            <input id="adminProfitCenterCode" class="muted-input" placeholder="e.g., 1200" />
+          </label>
+          <label class="col small">Profit center name
+            <input id="adminProfitCenterName" class="muted-input" placeholder="e.g., Commercial Sales & Supply" />
+          </label>
+          <label class="col small">Parent group
+            <input id="adminProfitCenterGroup" class="muted-input" placeholder="e.g., Transportation" />
+          </label>
+        </div>
+        <div class="row wrap" style="margin-top:8px;">
+          <button id="adminProfitCenterSave" type="button">Add profit center</button>
+          <button id="adminProfitCenterCancel" class="link-button" type="button">Cancel</button>
+          <div id="adminProfitCenterStatus" class="muted small"></div>
         </div>
       </form>
     </div>
