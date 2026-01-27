@@ -516,7 +516,7 @@
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
         <div>
           <h3 style="margin:0">Pending Agreements</h3>
-          <div class="muted small">Admin setup for recurring reminders, notification recipients, and approval nudges.</div>
+          <div class="muted small">Track Contracts & Agreements intake submissions, reminders, and notification recipients.</div>
         </div>
         <button id="pendingAgreementsGuide" type="button">Guided walkthrough</button>
       </div>
@@ -590,6 +590,16 @@
             </div>
             <div class="muted small" id="pendingUserStatus" style="margin-top:6px;"></div>
           </div>
+          <div class="section" id="pendingAgreementRecipientsSection">
+            <h4 style="margin-top:0;">Legal intake recipients</h4>
+            <div class="muted small">Set who receives new intake submission emails.</div>
+            <label class="small" style="display:block; margin-top:8px;">
+              <span>Recipients (one email per line)</span>
+              <textarea id="pendingAgreementRecipientsInput" class="muted-input" rows="4" placeholder="legal@company.com"></textarea>
+            </label>
+            <button id="pendingAgreementRecipientsSave" type="button">Save recipients</button>
+            <div class="muted small" id="pendingAgreementRecipientsStatus" style="margin-top:6px;"></div>
+          </div>
           <div class="section small muted">
             Pending agreements are approval workflows tied to contracts; tasks are manual to-dos you assign to a person.
           </div>
@@ -604,7 +614,7 @@
               <input id="pendingAgreementsSearch" placeholder="Search queue" />
               <button id="pendingAgreementsSearchButton" type="button">Search</button>
               <button id="pendingAgreementsSearchClear" type="button">Clear</button>
-              <button id="pendingAgreementsAdd" type="button">Add agreement</button>
+              <button id="pendingAgreementsAdd" type="button">Create Submission</button>
               <button id="pendingAgreementsQueueExpand" type="button" aria-pressed="false">Expand</button>
             </div>
           </div>
@@ -613,12 +623,15 @@
             <table class="compact-table">
               <thead>
                 <tr>
-                  <th>Agreement</th>
-                  <th>Contract</th>
-                  <th>Owner</th>
-                  <th>Due</th>
-                  <th>Status</th>
-                  <th>Created</th>
+                  <th>Date submitted</th>
+                  <th>Entity</th>
+                  <th>Requester</th>
+                  <th>Attorney assigned</th>
+                  <th>Matter</th>
+                  <th>Status notes</th>
+                  <th>Internal completion</th>
+                  <th>Fully executed</th>
+                  <th>Files</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -1288,51 +1301,135 @@ APP_BASE_URL=https://contracts.yourcompany.com</pre>
   </div>
 
   <div id="pendingAgreementModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4" aria-hidden="true">
-    <div class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+    <div class="w-full max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
       <div class="flex items-start justify-between gap-4">
         <div>
-          <h3 id="pendingAgreementModalTitle" class="text-lg font-semibold text-slate-900">Edit pending agreement</h3>
-          <p id="pendingAgreementModalDescription" class="mt-2 text-sm text-slate-600">Update the details for this approval item.</p>
+          <h3 id="pendingAgreementModalTitle" class="text-lg font-semibold text-slate-900">Pending agreement details</h3>
+          <p id="pendingAgreementModalDescription" class="mt-2 text-sm text-slate-600">Review and update the submission details.</p>
         </div>
         <button id="pendingAgreementEditClose" class="text-xl text-slate-400 hover:text-slate-600" aria-label="Close dialog">×</button>
       </div>
-      <div class="mt-4 space-y-3">
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
         <label class="small" style="display:block;">
-          <span>Agreement title</span>
-          <input id="pendingAgreementEditTitle" class="muted-input" />
+          <span>Entity</span>
+          <input id="pendingAgreementEditInternalCompany" class="muted-input" />
         </label>
         <label class="small" style="display:block;">
-          <span>Owner</span>
-          <input id="pendingAgreementEditOwner" class="muted-input" />
+          <span>Requester name</span>
+          <input id="pendingAgreementEditTeamMember" class="muted-input" />
         </label>
         <label class="small" style="display:block;">
-          <span>Owner email</span>
-          <input id="pendingAgreementEditOwnerEmail" class="muted-input" list="pendingAgreementOwnerEmails" />
+          <span>Requester email</span>
+          <input id="pendingAgreementEditRequesterEmail" class="muted-input" list="pendingAgreementOwnerEmails" />
           <datalist id="pendingAgreementOwnerEmails"></datalist>
         </label>
         <label class="small" style="display:block;">
-          <span>Due date</span>
-          <input id="pendingAgreementEditDueDate" type="date" class="muted-input" />
+          <span>Attorney assigned</span>
+          <select id="pendingAgreementEditAttorneyAssigned" class="muted-input"></select>
+        </label>
+        <label class="small" style="display:block;">
+          <span>Matter / agreement name</span>
+          <input id="pendingAgreementEditMatter" class="muted-input" />
         </label>
         <label class="small" style="display:block;">
           <span>Status</span>
           <input id="pendingAgreementEditStatus" class="muted-input" />
         </label>
         <label class="small" style="display:block;">
-          <span>Linked contract</span>
-          <input
-            id="pendingAgreementContractSearch"
-            class="muted-input"
-            list="pendingAgreementContractList"
-            placeholder="Search contracts by title or vendor"
-          />
-          <datalist id="pendingAgreementContractList"></datalist>
+          <span>Internal completion date</span>
+          <input id="pendingAgreementEditInternalCompletionDate" type="date" class="muted-input" />
         </label>
-        <div class="muted small" id="pendingAgreementContractMeta"></div>
+        <label class="small" style="display:block;">
+          <span>Fully executed date</span>
+          <input id="pendingAgreementEditFullyExecutedDate" type="date" class="muted-input" />
+        </label>
+        <label class="small md:col-span-2" style="display:block;">
+          <span>Status notes</span>
+          <textarea id="pendingAgreementEditStatusNotes" class="muted-input" rows="3"></textarea>
+        </label>
+      </div>
+
+      <div class="mt-6 grid gap-4 md:grid-cols-2">
+        <div class="rounded-xl border border-slate-200 p-4">
+          <h4 class="text-sm font-semibold text-slate-800" style="margin-top:0;">Files</h4>
+          <div id="pendingAgreementFilesList" class="muted small" style="margin-top:6px;"></div>
+          <div class="inline" style="margin-top:8px; align-items:flex-end;">
+            <label class="small" style="display:block;">
+              <span>File type</span>
+              <select id="pendingAgreementFileType" class="muted-input">
+                <option value="draft">Draft</option>
+                <option value="executed">Executed</option>
+              </select>
+            </label>
+            <label class="small" style="display:block;">
+              <span>Upload file</span>
+              <input id="pendingAgreementFileUpload" type="file" class="muted-input" />
+            </label>
+            <button id="pendingAgreementFileUploadButton" type="button">Upload</button>
+          </div>
+          <div class="muted small" id="pendingAgreementFileStatus" style="margin-top:6px;"></div>
+        </div>
+        <div class="rounded-xl border border-slate-200 p-4">
+          <h4 class="text-sm font-semibold text-slate-800" style="margin-top:0;">Notes</h4>
+          <div id="pendingAgreementNotesList" class="muted small" style="margin-top:6px;"></div>
+          <label class="small" style="display:block; margin-top:8px;">
+            <span>Add note</span>
+            <textarea id="pendingAgreementNoteInput" class="muted-input" rows="2"></textarea>
+          </label>
+          <button id="pendingAgreementNoteAdd" type="button" style="margin-top:6px;">Add note</button>
+          <div class="muted small" id="pendingAgreementNoteStatus" style="margin-top:6px;"></div>
+        </div>
+      </div>
+
+      <div class="mt-6 flex flex-wrap justify-end gap-3">
+        <button id="pendingAgreementEditCancel" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Close</button>
+        <button id="pendingAgreementEditSave" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pendingAgreementIntakeModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4" aria-hidden="true">
+    <div class="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 class="text-lg font-semibold text-slate-900">Contracts &amp; Agreements Intake</h3>
+          <p class="mt-2 text-sm text-slate-600">Submit a new contract intake (file upload optional).</p>
+        </div>
+        <button id="pendingAgreementIntakeClose" class="text-xl text-slate-400 hover:text-slate-600" aria-label="Close dialog">×</button>
+      </div>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <label class="small" style="display:block;">
+          <span>Entity</span>
+          <input id="pendingAgreementIntakeInternalCompany" class="muted-input" />
+        </label>
+        <label class="small" style="display:block;">
+          <span>Requester name</span>
+          <input id="pendingAgreementIntakeTeamMember" class="muted-input" />
+        </label>
+        <label class="small" style="display:block;">
+          <span>Requester email</span>
+          <input id="pendingAgreementIntakeRequesterEmail" class="muted-input" />
+        </label>
+        <label class="small" style="display:block;">
+          <span>Attorney assigned</span>
+          <select id="pendingAgreementIntakeAttorneyAssigned" class="muted-input"></select>
+        </label>
+        <label class="small md:col-span-2" style="display:block;">
+          <span>Matter / agreement name</span>
+          <input id="pendingAgreementIntakeMatter" class="muted-input" />
+        </label>
+        <label class="small md:col-span-2" style="display:block;">
+          <span>Status notes</span>
+          <textarea id="pendingAgreementIntakeStatusNotes" class="muted-input" rows="3"></textarea>
+        </label>
+        <label class="small md:col-span-2" style="display:block;">
+          <span>Upload draft (optional)</span>
+          <input id="pendingAgreementIntakeFile" type="file" class="muted-input" />
+        </label>
       </div>
       <div class="mt-6 flex flex-wrap justify-end gap-3">
-        <button id="pendingAgreementEditCancel" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
-        <button id="pendingAgreementEditSave" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Save changes</button>
+        <button id="pendingAgreementIntakeCancel" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+        <button id="pendingAgreementIntakeSave" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Submit intake</button>
       </div>
     </div>
   </div>
