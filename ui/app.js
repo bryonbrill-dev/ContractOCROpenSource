@@ -57,6 +57,7 @@ const state = {
   adminUserModalTrigger: null,
   adminRoleEditId: null,
   adminProfitCenterEditId: null,
+  adminProfitCenterModalTrigger: null,
   newUserNotificationEmail: "",
   profitCenters: [],
   currentUser: null,
@@ -2870,6 +2871,27 @@ function submitModal() {
   $("adminUserSave")?.click();
 }
 
+function openAdminProfitCenterModal(trigger = null) {
+  state.adminProfitCenterModalTrigger = trigger || document.activeElement;
+  const overlay = $("adminProfitCenterModalOverlay");
+  overlay?.classList.remove("hidden");
+  overlay?.setAttribute("aria-hidden", "false");
+  setTimeout(() => $("adminProfitCenterCode")?.focus(), 0);
+}
+
+function closeAdminProfitCenterModal() {
+  const overlay = $("adminProfitCenterModalOverlay");
+  overlay?.classList.add("hidden");
+  overlay?.setAttribute("aria-hidden", "true");
+  if (
+    state.adminProfitCenterModalTrigger &&
+    typeof state.adminProfitCenterModalTrigger.focus === "function"
+  ) {
+    state.adminProfitCenterModalTrigger.focus();
+  }
+  state.adminProfitCenterModalTrigger = null;
+}
+
 function renderAdminUsers() {
   const tbody = $("adminUsersTable");
   if (!tbody) return;
@@ -2932,11 +2954,17 @@ function resetAdminProfitCenterForm() {
   if (code) code.value = "";
   if (name) name.value = "";
   if (group) group.value = "";
-  $("adminProfitCenterSave")?.setAttribute("data-mode", "create");
-  const adminProfitCenterSave = $("adminProfitCenterSave");
-  if (adminProfitCenterSave) adminProfitCenterSave.textContent = "Add profit center";
+  setAdminProfitCenterModalMode("create");
   const status = $("adminProfitCenterStatus");
   if (status) status.textContent = "";
+}
+
+function setAdminProfitCenterModalMode(mode) {
+  const title = $("adminProfitCenterModalTitle");
+  const saveButton = $("adminProfitCenterSave");
+  if (title) title.textContent = mode === "edit" ? "Edit profit center" : "Add profit center";
+  if (saveButton) saveButton.setAttribute("data-mode", mode);
+  if (saveButton) saveButton.textContent = mode === "edit" ? "Update profit center" : "Add profit center";
 }
 
 function openAdminRoleEdit(role) {
@@ -2952,7 +2980,7 @@ function openAdminRoleEdit(role) {
   if (status) status.textContent = `Editing ${role.name}`;
 }
 
-function openAdminProfitCenterEdit(center) {
+function openAdminProfitCenterEdit(center, trigger = null) {
   state.adminProfitCenterEditId = center.id;
   const code = $("adminProfitCenterCode");
   const name = $("adminProfitCenterName");
@@ -2960,11 +2988,10 @@ function openAdminProfitCenterEdit(center) {
   if (code) code.value = center.code || "";
   if (name) name.value = center.name || "";
   if (group) group.value = center.group_name || "";
-  $("adminProfitCenterSave")?.setAttribute("data-mode", "edit");
-  const adminProfitCenterSave = $("adminProfitCenterSave");
-  if (adminProfitCenterSave) adminProfitCenterSave.textContent = "Update profit center";
+  setAdminProfitCenterModalMode("edit");
   const status = $("adminProfitCenterStatus");
   if (status) status.textContent = `Editing ${center.code}`;
+  openAdminProfitCenterModal(trigger);
 }
 
 function renderAdminRoles() {
@@ -3037,7 +3064,7 @@ function renderAdminProfitCenters() {
     btn.addEventListener("click", () => {
       const centerId = Number(btn.dataset.profitCenterId);
       const center = state.profitCenters.find((item) => item.id === centerId);
-      if (center) openAdminProfitCenterEdit(center);
+      if (center) openAdminProfitCenterEdit(center, btn);
     });
   });
   document.querySelectorAll(".admin-profit-center-delete").forEach((btn) => {
@@ -3303,6 +3330,10 @@ async function loadAdminData() {
 function initAdminUi() {
   $("adminRefresh")?.addEventListener("click", loadAdminData);
   $("adminUserAdd")?.addEventListener("click", (event) => openAddUserModal(event.currentTarget));
+  $("adminProfitCenterAdd")?.addEventListener("click", (event) => {
+    resetAdminProfitCenterForm();
+    openAdminProfitCenterModal(event.currentTarget);
+  });
   $("adminUserCancel")?.addEventListener("click", () => {
     resetAdminUserForm();
     closeModal();
@@ -3321,9 +3352,25 @@ function initAdminUi() {
     if (event.key === "Escape" && !$("adminUserModalOverlay")?.classList.contains("hidden")) {
       closeModal();
     }
+    if (event.key === "Escape" && !$("adminProfitCenterModalOverlay")?.classList.contains("hidden")) {
+      closeAdminProfitCenterModal();
+    }
   });
   $("adminRoleCancel")?.addEventListener("click", resetAdminRoleForm);
-  $("adminProfitCenterCancel")?.addEventListener("click", resetAdminProfitCenterForm);
+  $("adminProfitCenterCancel")?.addEventListener("click", () => {
+    resetAdminProfitCenterForm();
+    closeAdminProfitCenterModal();
+  });
+  $("adminProfitCenterModalClose")?.addEventListener("click", closeAdminProfitCenterModal);
+  $("adminProfitCenterForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    $("adminProfitCenterSave")?.click();
+  });
+  $("adminProfitCenterModalOverlay")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeAdminProfitCenterModal();
+    }
+  });
   $("adminUserProfitCenterGroups")?.addEventListener("change", () => {
     applyProfitCenterGroupsToCenters();
   });
