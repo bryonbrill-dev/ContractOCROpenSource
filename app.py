@@ -20,7 +20,7 @@ import urllib.request
 from datetime import datetime, date, timedelta
 from email.message import EmailMessage
 from email.utils import parseaddr
-from typing import Optional, List, Literal, Dict, Any, Set
+from typing import Optional, List, Literal, Dict, Any, Set, Tuple
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -4159,6 +4159,23 @@ def _store_pending_agreement_file(
     }
 
 
+def _format_executed_contract_name(filename: str, executed_at: Optional[str]) -> Tuple[str, str]:
+    safe_name = safe_filename(filename or "pending-agreement.bin")
+    base, ext = os.path.splitext(safe_name)
+    date_value = executed_at
+    if date_value:
+        try:
+            date_value = date_value.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(date_value)
+        except ValueError:
+            parsed = datetime.utcnow()
+    else:
+        parsed = datetime.utcnow()
+    date_label = parsed.strftime("%m-%d-%Y")
+    label = f"{base} Fully Executed {date_label}"
+    return safe_filename(f"{label}{ext}"), label
+
+
 def _create_contract_from_pending_file(
     agreement_id: str,
     agreement: Dict[str, Any],
@@ -4169,6 +4186,13 @@ def _create_contract_from_pending_file(
         raise HTTPException(status_code=404, detail="Pending agreement file not found")
     file_hash = file_record["sha256"]
     filename = safe_filename(file_record["file_name"] or "pending-agreement.bin")
+    contract_filename = filename
+    contract_title = agreement.get("matter") or agreement.get("title") or os.path.splitext(filename)[0]
+    if file_record.get("file_type") == "executed":
+        contract_filename, contract_title = _format_executed_contract_name(
+            filename,
+            agreement.get("fully_executed_date"),
+        )
 
     with db() as conn:
         existing = conn.execute(
@@ -4196,10 +4220,9 @@ def _create_contract_from_pending_file(
         dt = datetime.utcnow()
         subdir = os.path.join(DATA_ROOT, f"{dt.year:04d}", f"{dt.month:02d}")
         os.makedirs(subdir, exist_ok=True)
-        stored_name = f"{contract_id}_{file_hash[:16]}_{filename}"
+        stored_name = f"{contract_id}_{file_hash[:16]}_{contract_filename}"
         contract_path = os.path.join(subdir, stored_name)
         shutil.copy2(stored_path, contract_path)
-        contract_title = agreement.get("matter") or agreement.get("title") or os.path.splitext(filename)[0]
         vendor = agreement.get("internal_company") or None
         uploaded_at = now_iso()
         conn.execute(
@@ -4215,7 +4238,7 @@ def _create_contract_from_pending_file(
                 contract_title,
                 vendor,
                 None,
-                filename,
+                contract_filename,
                 file_hash,
                 contract_path,
                 file_record["mime_type"] or "application/octet-stream",
@@ -4956,6 +4979,7 @@ def upload_pending_agreement_file(
         updated_at = now_iso()
         if file_type == "executed":
             fully_executed_date = agreement.get("fully_executed_date") or updated_at
+            agreement["fully_executed_date"] = fully_executed_date
             conn.execute(
                 """
                 UPDATE pending_agreements
