@@ -425,7 +425,7 @@ function openPendingReminderModal(reminder) {
   frequency.value = reminder.frequency || "weekly";
   message.value = reminder.message || "";
   renderCheckboxList("pendingReminderEditRoles", state.roles, reminder.roles || []);
-  renderCheckboxList(
+  renderMultiSelectOptions(
     "pendingReminderEditRecipients",
     state.notificationUsers,
     reminder.recipients || [],
@@ -895,17 +895,9 @@ async function updatePermissionMatrix(permissionKey, roles) {
   return res.json();
 }
 
-async function createNotificationUser(payload) {
-  const res = await apiFetch("/api/notification-users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+async function fetchUserDirectory() {
+  const res = await apiFetch("/api/user-directory");
   return res.json();
-}
-
-async function deleteNotificationUser(userId) {
-  await apiFetch(`/api/notification-users/${userId}`, { method: "DELETE" });
 }
 
 async function fetchAdminUsers() {
@@ -1309,7 +1301,7 @@ async function loadReferenceData() {
     hasPermission("pending_agreement_reminders_manage") ||
     hasPermission("tasks_manage");
   const [notificationUsers, roles] = await Promise.all([
-    shouldLoadNotificationUsers ? fetchOptionalJson("/api/notification-users", []) : [],
+    shouldLoadNotificationUsers ? fetchOptionalJson("/api/user-directory", []) : [],
     fetchOptionalJson("/api/roles", []),
   ]);
   state.definitions = await defsRes.json();
@@ -2625,8 +2617,16 @@ async function exportAllContractsCsv() {
 
 const TASK_REMINDER_OPTIONS = ["7 days before", "1 day before", "Due date", "1 day after"];
 
+function getFirstName(name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return "";
+  return trimmed.split(/\s+/)[0] || trimmed;
+}
+
 function formatUserLabel(user) {
-  return `${user.name} (${user.email})`;
+  const firstName = getFirstName(user.name);
+  const label = firstName || user.name || user.email;
+  return user.email ? `${label} (${user.email})` : label;
 }
 
 function renderCheckboxList(containerId, items, selectedValues = []) {
@@ -2744,7 +2744,6 @@ function applyProfitCenterGroupsToCenters() {
 function renderUserDirectories() {
   const targets = ["pendingUserDirectory", "taskUserDirectory"];
   const canView = hasPermission("user_directory_view");
-  const canManage = hasPermission("user_directory_manage");
   targets.forEach((targetId) => {
     const container = $(targetId);
     if (!container) return;
@@ -2762,46 +2761,12 @@ function renderUserDirectories() {
         <div class="folder-card">
           <div class="folder-header">
             <div class="folder-title">${escapeHtml(user.name)}</div>
-            ${
-              canManage
-                ? `<button class="link-button" data-remove-user="${user.id}" data-remove-email="${escapeHtml(
-                    user.email,
-                  )}">Remove</button>`
-                : ""
-            }
           </div>
           <div class="folder-body small">${escapeHtml(user.email)}</div>
         </div>
       `,
       )
       .join("");
-  });
-
-  targets.forEach((targetId) => {
-    const container = $(targetId);
-    if (!container) return;
-    if (canManage) {
-      container.querySelectorAll("button[data-remove-user]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const userId = Number.parseInt(btn.dataset.removeUser, 10);
-          const email = btn.dataset.removeEmail;
-          const user = state.notificationUsers.find((entry) => entry.id === userId);
-          if (!user) {
-            return;
-          }
-          try {
-            await deleteNotificationUser(userId);
-            state.notificationUsers = state.notificationUsers.filter((entry) => entry.id !== userId);
-            renderUserDirectories();
-            renderNotificationOptions();
-          } catch (err) {
-            await showAlert(`Unable to remove ${email}. ${err.message}`, {
-              title: "Remove failed",
-            });
-          }
-        });
-      });
-    }
   });
 }
 
@@ -3569,8 +3534,8 @@ function initAdminUi() {
 
 function renderNotificationOptions() {
   renderCheckboxList("pendingRoleOptions", state.roles);
-  renderCheckboxList("pendingRecipientOptions", state.notificationUsers);
-  renderCheckboxList("taskAssigneeOptions", state.notificationUsers);
+  renderMultiSelectOptions("pendingRecipientOptions", state.notificationUsers);
+  renderMultiSelectOptions("taskAssigneeOptions", state.notificationUsers);
   renderCheckboxList("taskReminderOptions", TASK_REMINDER_OPTIONS);
 }
 
@@ -4008,7 +3973,7 @@ function initPendingAgreementsUi() {
     const roles = getCheckedValues("pendingReminderEditRoles")
       .map((value) => Number.parseInt(value, 10))
       .filter((value) => Number.isFinite(value));
-    const recipients = getCheckedValues("pendingReminderEditRecipients");
+    const recipients = getSelectedValues("pendingReminderEditRecipients");
     const message = reminderModal.message?.value?.trim();
 
     if (!roles.length && !recipients.length) {
@@ -4202,7 +4167,7 @@ function initPendingAgreementsUi() {
     const roles = getCheckedValues("pendingRoleOptions")
       .map((value) => Number.parseInt(value, 10))
       .filter((value) => Number.isFinite(value));
-    const recipients = getCheckedValues("pendingRecipientOptions");
+    const recipients = getSelectedValues("pendingRecipientOptions");
     const message = $("pendingReminderMessage")?.value?.trim();
 
     if (!roles.length && !recipients.length) {
@@ -4225,38 +4190,6 @@ function initPendingAgreementsUi() {
       await showAlert("Reminder rule saved.", { title: "Saved" });
     } catch (err) {
       await showAlert(`Unable to save reminder rule. ${err.message}`, { title: "Save failed" });
-    }
-  });
-
-  $("pendingUserAdd")?.addEventListener("click", async () => {
-    if (!hasPermission("user_directory_manage")) {
-      await showAlert("You do not have permission to manage the user directory.", {
-        title: "Access denied",
-      });
-      return;
-    }
-    const name = $("pendingUserName")?.value?.trim();
-    const email = $("pendingUserEmail")?.value?.trim();
-    if (!name || !email) {
-      await showAlert("Provide both name and email.", { title: "Missing info" });
-      return;
-    }
-    if (state.notificationUsers.some((user) => user.email.toLowerCase() === email.toLowerCase())) {
-      await showAlert("That email is already in the list.", { title: "Duplicate user" });
-      return;
-    }
-    try {
-      const created = await createNotificationUser({ name, email });
-      state.notificationUsers.push(created);
-      if ($("pendingUserName")) $("pendingUserName").value = "";
-      if ($("pendingUserEmail")) $("pendingUserEmail").value = "";
-      renderUserDirectories();
-      renderNotificationOptions();
-      renderPendingAgreementOwnerEmails();
-      const status = $("pendingUserStatus");
-      if (status) status.textContent = "User added.";
-    } catch (err) {
-      await showAlert(`Unable to add user. ${err.message}`, { title: "Save failed" });
     }
   });
 
@@ -4331,7 +4264,7 @@ function initTasksUi() {
     const dueDate = $("taskDueDate")?.value;
     const recurrence = $("taskRecurrence")?.value || "none";
     const reminders = getCheckedValues("taskReminderOptions");
-    const assignees = getCheckedValues("taskAssigneeOptions");
+    const assignees = getSelectedValues("taskAssigneeOptions");
 
     if (!title || !dueDate) {
       await showAlert("Task title and due date are required.", { title: "Missing info" });
@@ -4357,37 +4290,6 @@ function initTasksUi() {
     if ($("taskDueDate")) $("taskDueDate").value = "";
     const status = $("taskStatus");
     if (status) status.textContent = "Task created.";
-  });
-
-  $("taskUserAdd")?.addEventListener("click", async () => {
-    if (!hasPermission("user_directory_manage")) {
-      await showAlert("You do not have permission to manage the user directory.", {
-        title: "Access denied",
-      });
-      return;
-    }
-    const name = $("taskUserName")?.value?.trim();
-    const email = $("taskUserEmail")?.value?.trim();
-    if (!name || !email) {
-      await showAlert("Provide both name and email.", { title: "Missing info" });
-      return;
-    }
-    if (state.notificationUsers.some((user) => user.email.toLowerCase() === email.toLowerCase())) {
-      await showAlert("That email is already in the list.", { title: "Duplicate user" });
-      return;
-    }
-    try {
-      const created = await createNotificationUser({ name, email });
-      state.notificationUsers.push(created);
-      if ($("taskUserName")) $("taskUserName").value = "";
-      if ($("taskUserEmail")) $("taskUserEmail").value = "";
-      renderUserDirectories();
-      renderNotificationOptions();
-      const status = $("taskUserStatus");
-      if (status) status.textContent = "User added.";
-    } catch (err) {
-      await showAlert(`Unable to add user. ${err.message}`, { title: "Save failed" });
-    }
   });
 
   loadTasks({ reset: true });
@@ -4741,9 +4643,9 @@ function initGuidedTours() {
 
   const pendingAgreementsSteps = [
     {
-      targetId: "pendingUserAdd",
-      title: "Add notification recipients",
-      body: "Add names and emails so reminders and nudges have recipients to target.",
+      targetId: "pendingRecipientOptions",
+      title: "Select notification recipients",
+      body: "Choose users from the synced directory to receive pending agreement reminders.",
     },
     {
       targetId: "pendingReminderFrequency",
@@ -4769,9 +4671,9 @@ function initGuidedTours() {
 
   const taskSteps = [
     {
-      targetId: "taskUserAdd",
-      title: "Add task assignees",
-      body: "Add users so tasks can be assigned and nudged.",
+      targetId: "taskUserDirectory",
+      title: "Review the user directory",
+      body: "Task assignments use the synced admin directory for assignees.",
     },
     {
       targetId: "taskTitle",

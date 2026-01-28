@@ -3,6 +3,7 @@
 from processor import process_contract
 
 import os
+import shutil
 import json
 import uuid
 import hashlib
@@ -3894,6 +3895,46 @@ def oidc_callback(code: str, state: str):
 
 
 # ----------------------------
+# User directory
+def _can_view_user_directory(conn: sqlite3.Connection, user: Optional[Dict[str, Any]]) -> bool:
+    if not user:
+        return False
+    return any(
+        _user_has_permission(conn, user, permission)
+        for permission in (
+            "user_directory_view",
+            "pending_agreement_reminders_manage",
+            "pending_agreements_manage",
+            "tasks_manage",
+        )
+    )
+
+
+@app.get("/api/user-directory")
+def list_user_directory(user: Optional[Dict[str, Any]] = Depends(require_user)):
+    with db() as conn:
+        if not _can_view_user_directory(conn, user):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if _table_has_column(conn, "auth_users", "is_active"):
+            rows = conn.execute(
+                """
+                SELECT id, name, email
+                FROM auth_users
+                WHERE is_active = 1
+                ORDER BY name ASC, email ASC
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, name, email
+                FROM auth_users
+                ORDER BY name ASC, email ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+
 # Notification users
 # ----------------------------
 @app.get("/api/notification-users")
@@ -4115,6 +4156,88 @@ def _store_pending_agreement_file(
         "uploaded_at": uploaded_at,
         "sha256": file_hash,
         "size_bytes": len(data),
+    }
+
+
+def _create_contract_from_pending_file(
+    agreement_id: str,
+    agreement: Dict[str, Any],
+    file_record: Dict[str, Any],
+) -> Dict[str, Any]:
+    stored_path = file_record["stored_path"]
+    if not os.path.exists(stored_path):
+        raise HTTPException(status_code=404, detail="Pending agreement file not found")
+    file_hash = file_record["sha256"]
+    filename = safe_filename(file_record["file_name"] or "pending-agreement.bin")
+
+    with db() as conn:
+        existing = conn.execute(
+            """
+            SELECT id, agreement_type, stored_path, status
+            FROM contracts
+            WHERE sha256 = ?
+            """,
+            (file_hash,),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE pending_agreements SET contract_id = ? WHERE id = ?",
+                (existing["id"], agreement_id),
+            )
+            return {
+                "contract_id": existing["id"],
+                "stored_path": existing["stored_path"],
+                "agreement_type": existing["agreement_type"],
+                "status": existing["status"],
+                "new": False,
+            }
+
+        contract_id = str(uuid.uuid4())
+        dt = datetime.utcnow()
+        subdir = os.path.join(DATA_ROOT, f"{dt.year:04d}", f"{dt.month:02d}")
+        os.makedirs(subdir, exist_ok=True)
+        stored_name = f"{contract_id}_{file_hash[:16]}_{filename}"
+        contract_path = os.path.join(subdir, stored_name)
+        shutil.copy2(stored_path, contract_path)
+        contract_title = agreement.get("matter") or agreement.get("title") or os.path.splitext(filename)[0]
+        vendor = agreement.get("internal_company") or None
+        uploaded_at = now_iso()
+        conn.execute(
+            """
+            INSERT INTO contracts (
+              id, title, vendor, agreement_type,
+              original_filename, sha256, stored_path,
+              mime_type, uploaded_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                contract_id,
+                contract_title,
+                vendor,
+                None,
+                filename,
+                file_hash,
+                contract_path,
+                file_record["mime_type"] or "application/octet-stream",
+                uploaded_at,
+                "processing",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO contracts_fts (contract_id, title, vendor, ocr_text) VALUES (?, ?, ?, ?)",
+            (contract_id, contract_title, vendor or "", ""),
+        )
+        conn.execute(
+            "UPDATE pending_agreements SET contract_id = ? WHERE id = ?",
+            (contract_id, agreement_id),
+        )
+
+    return {
+        "contract_id": contract_id,
+        "stored_path": contract_path,
+        "agreement_type": None,
+        "status": "processing",
+        "new": True,
     }
 
 
@@ -4814,7 +4937,8 @@ def upload_pending_agreement_file(
         agreement_row = conn.execute(
             """
             SELECT id, team_member, requester_email, owner, owner_email,
-                   status, fully_executed_date, contract_id
+                   status, fully_executed_date, contract_id,
+                   internal_company, matter, title
             FROM pending_agreements WHERE id = ?
             """,
             (agreement_id,),
@@ -4856,6 +4980,55 @@ def upload_pending_agreement_file(
         )
 
         requester_email = _resolve_pending_agreement_recipient(conn, agreement_row)
+
+    contract_info = None
+    if file_type == "executed":
+        contract_info = _create_contract_from_pending_file(agreement_id, agreement, file_record)
+        if contract_info.get("new"):
+            logger.info(
+                "PROCESS START contract_id=%s pending_agreement_id=%s file=%s",
+                contract_info["contract_id"],
+                agreement_id,
+                file_record["file_name"],
+            )
+            try:
+                result = process_contract(
+                    db_path=DB_PATH,
+                    contract_id=contract_info["contract_id"],
+                    stored_path=contract_info["stored_path"],
+                    tesseract_cmd=TESSERACT_CMD,
+                    max_pages=8,
+                    poppler_path=POPPLER_PATH,
+                )
+
+                ocr_text = result.get("ocr_text", "")
+                agreement_type = contract_info.get("agreement_type")
+                if not agreement_type:
+                    agreement_type = detect_agreement_type(ocr_text, file_record["file_name"])
+
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE contracts SET status='processed', agreement_type=? WHERE id=?",
+                        (agreement_type, contract_info["contract_id"]),
+                    )
+
+                auto_tag_contract(contract_info["contract_id"], ocr_text)
+                logger.info("PROCESS SUCCESS contract_id=%s", contract_info["contract_id"])
+            except Exception as e:
+                error_msg = f"{type(e).__name__}: {str(e)}"
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE contracts SET status='error' WHERE id=?",
+                        (contract_info["contract_id"],),
+                    )
+                logger.error(
+                    "PROCESS FAILED contract_id=%s pending_agreement_id=%s filename=%s | %s\n%s",
+                    contract_info["contract_id"],
+                    agreement_id,
+                    file_record["file_name"],
+                    error_msg,
+                    traceback.format_exc(),
+                )
 
     if file_type == "executed" and requester_email:
         portal_link = _format_app_link(
