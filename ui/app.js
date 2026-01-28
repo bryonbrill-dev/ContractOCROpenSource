@@ -1594,7 +1594,10 @@ function renderTagPill(tag) {
 }
 
 function contractOptionLabel(contract) {
-  return `${contract.title || contract.id || "Contract"} — ${contract.vendor || "Unknown vendor"}`;
+  const title = (contract.title || "").trim();
+  const filename = (contract.original_filename || "").trim();
+  const label = title || filename || contract.id || "Contract";
+  return `${label} — ${contract.vendor || "Unknown vendor"}`;
 }
 
 function renderContractDetail(data) {
@@ -4989,9 +4992,10 @@ function renderPlannerTable() {
   tbody.innerHTML = state.plannerEvents
     .map((e) => {
       const contract = state.contracts.find((c) => c.id === e.contract_id);
+      const label = contract ? contractOptionLabel(contract) : e.title || e.contract_id || "Contract";
       return `
         <tr data-event="${e.id}">
-          <td><div class="small">${contract ? contractOptionLabel(contract) : e.contract_id}</div></td>
+          <td><div class="small">${label}</div></td>
           <td>
             <select class="planner-type">${optionList(STANDARD_EVENT_TYPES, e.event_type)}</select>
           </td>
