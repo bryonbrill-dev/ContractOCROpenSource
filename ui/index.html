@@ -571,7 +571,7 @@
             <h3 style="margin:0">Recent Contracts</h3>
             <button id="refresh">Refresh</button>
           </div>
-          <div class="muted small" style="margin-top:6px">Showing 5 most recent processed contracts.</div>
+          <div class="muted small" style="margin-top:6px">Showing 5 most recent uploads.</div>
           <details class="legend">
             <summary class="sgh-collapsible-header">
               <span class="summary-title sgh-collapsible-title">Color key</span>
@@ -902,11 +902,6 @@
           </table>
         </div>
         <div class="col card" style="display:flex; flex-direction:column; gap:12px;">
-          <div class="section" id="pendingUserDirectorySection">
-            <h4 style="margin-top:0;">Notification recipients</h4>
-            <div class="muted small">Synced from the admin user directory for reminders and task assignments.</div>
-            <div id="pendingUserDirectory" class="folder-list"></div>
-          </div>
           <div class="section" id="pendingAgreementRecipientsSection">
             <h4 style="margin-top:0;">Legal intake recipients</h4>
             <div class="muted small">Set who receives new intake submission emails.</div>
@@ -1053,11 +1048,6 @@
           <button id="taskQueueLoadMore" class="hidden" type="button" style="margin-top:10px;">
             Load more
           </button>
-          <div class="section" id="taskUserDirectorySection" style="margin-top:12px;">
-            <h4>User directory</h4>
-            <div class="muted small">Synced from the admin user directory for task assignments.</div>
-            <div id="taskUserDirectory" class="folder-list"></div>
-          </div>
         </div>
       </div>
     </div>
@@ -1483,14 +1473,10 @@
         <div class="small" style="color:#374151;">
           <p style="margin:0 0 6px 0;"><b>Pending Agreement Reminders</b></p>
           <ol style="margin:0 0 10px 18px;">
-            <li>Add notification recipients in the Pending Agreements page if they are not listed yet.</li>
+            <li>Choose notification recipients for pending agreement reminders.</li>
             <li>Select a frequency, choose roles and/or individual recipients, and enter a reminder message.</li>
             <li>Click <b>Save Reminder Rule</b> and confirm the rule appears in the reminder table.</li>
           </ol>
-          <p style="margin:0 0 10px 0;">
-            Tip: Notification recipients are stored in the user directory so you can reuse them across reminders without
-            retyping emails. Add multiple recipients by selecting more than one user.
-          </p>
           <p style="margin:0 0 6px 0;"><b>Pending Agreements Queue</b></p>
           <ol style="margin:0 0 10px 18px;">
             <li>Click <b>Add agreement</b> to create a pending approval entry.</li>
@@ -1499,7 +1485,6 @@
           </ol>
           <p style="margin:0 0 6px 0;"><b>Tasks Queue</b></p>
           <ol style="margin:0 0 0 18px;">
-            <li>Add users to the Task user directory so they can be assigned.</li>
             <li>Enter a task title, description, due date, recurrence, and reminder offsets.</li>
             <li>Select assignees and click <b>Create Task</b> to populate the queue.</li>
           </ol>

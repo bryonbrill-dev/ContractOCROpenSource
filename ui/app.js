@@ -303,7 +303,6 @@ function applyPermissionVisibility() {
     "hidden",
     !hasPermission("pending_agreement_reminders_manage"),
   );
-  $("pendingUserDirectorySection")?.classList.toggle("hidden", !hasPermission("user_directory_view"));
   $("pendingAgreementRecipientsSection")?.classList.toggle(
     "hidden",
     !hasPermission("pending_agreements_manage"),
@@ -311,12 +310,10 @@ function applyPermissionVisibility() {
   $("pendingAgreementsAdd")?.classList.toggle("hidden", !hasPermission("pending_agreements_view"));
 
   $("taskCreateCard")?.classList.toggle("hidden", !hasPermission("tasks_manage"));
-  $("taskUserDirectorySection")?.classList.toggle("hidden", !hasPermission("user_directory_view"));
 
   renderPendingAgreementsQueue();
   renderPendingReminderTable();
   renderTaskTable();
-  renderUserDirectories();
 }
 
 async function loginUser(email, password) {
@@ -1312,7 +1309,6 @@ async function loadReferenceData() {
   renderAllContractsFilters();
   renderNotificationOptions();
   renderPendingReminderTable();
-  renderUserDirectories();
   applyPermissionVisibility();
 }
 
@@ -1381,16 +1377,16 @@ async function loadRecent() {
 
   const res = await apiFetch(`/api/search?mode=quick&q=&limit=100`);
   const rows = await res.json();
-  const processedRows = rows.filter((row) => (row.status || "").toLowerCase() === "processed").slice(0, 5);
-  state.contracts = processedRows;
+  const recentRows = rows.slice(0, 5);
+  state.contracts = recentRows;
   const isAdmin = isAdminUser();
 
-  if (!processedRows.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="muted">No processed contracts yet.</td></tr>`;
+  if (!recentRows.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted">No uploads yet.</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = processedRows
+  tbody.innerHTML = recentRows
     .map((r) => {
       const id = r.id;
       const title = r.title || r.original_filename || id;
@@ -2298,6 +2294,43 @@ async function loadDetail(id) {
   }
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollContractStatus(contractId, fileName) {
+  const log = $("uploadLog");
+  const maxAttempts = 12;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await delay(2500);
+    try {
+      const res = await apiFetch(`/api/contracts/${contractId}`);
+      const data = await res.json();
+      const status = (data.status || "processing").toLowerCase();
+      const note =
+        status === "processing"
+          ? `Checking processing… (${attempt}/${maxAttempts})`
+          : "Processing complete.";
+      if (log) {
+        log.innerHTML = `Uploaded: <b>${escapeHtml(fileName)}</b> → ${badge(status)} <span class="muted small">${contractId}</span> <span class="muted small">${note}</span>`;
+      }
+      if (status !== "processing") {
+        await loadRecent();
+        return;
+      }
+    } catch (err) {
+      if (log) {
+        log.innerHTML = `<span class="badge red">error</span> ${escapeHtml(fileName)}: ${err.message}`;
+      }
+      return;
+    }
+  }
+  if (log) {
+    log.innerHTML = `Uploaded: <b>${escapeHtml(fileName)}</b> → ${badge("processing")} <span class="muted small">${contractId}</span> <span class="muted small">Processing is taking longer than expected.</span>`;
+  }
+  await loadRecent();
+}
+
 async function uploadFiles(files) {
   const log = $("uploadLog");
   for (const file of files) {
@@ -2312,10 +2345,13 @@ async function uploadFiles(files) {
       });
 
       const j = await res.json();
-      log.innerHTML = `Uploaded: <b>${file.name}</b> → ${badge(j.status)} <span class="muted small">${j.contract_id}</span>`;
+      log.innerHTML = `Uploaded: <b>${escapeHtml(file.name)}</b> → ${badge(j.status)} <span class="muted small">${j.contract_id}</span>`;
       await loadRecent();
+      if ((j.status || "").toLowerCase() === "processing") {
+        await pollContractStatus(j.contract_id, file.name);
+      }
     } catch (e) {
-      log.innerHTML = `<span class="badge red">error</span> ${file.name}: ${e.message}`;
+      log.innerHTML = `<span class="badge red">error</span> ${escapeHtml(file.name)}: ${e.message}`;
     }
   }
 }
@@ -2738,35 +2774,6 @@ function applyProfitCenterGroupsToCenters() {
     if (groupedIds.has(option.value)) {
       option.selected = true;
     }
-  });
-}
-
-function renderUserDirectories() {
-  const targets = ["pendingUserDirectory", "taskUserDirectory"];
-  const canView = hasPermission("user_directory_view");
-  targets.forEach((targetId) => {
-    const container = $(targetId);
-    if (!container) return;
-    if (!canView) {
-      container.innerHTML = `<div class="muted small">You do not have access to the user directory.</div>`;
-      return;
-    }
-    if (!state.notificationUsers.length) {
-      container.innerHTML = `<div class="muted small">No users added yet.</div>`;
-      return;
-    }
-    container.innerHTML = state.notificationUsers
-      .map(
-        (user) => `
-        <div class="folder-card">
-          <div class="folder-header">
-            <div class="folder-title">${escapeHtml(user.name)}</div>
-          </div>
-          <div class="folder-body small">${escapeHtml(user.email)}</div>
-        </div>
-      `,
-      )
-      .join("");
   });
 }
 
@@ -3955,7 +3962,6 @@ function initPendingAgreementsUi() {
   renderNotificationOptions();
   renderPendingReminderTable();
   renderPendingAgreementsQueue();
-  renderUserDirectories();
   loadPendingAgreementRecipients();
 
   const reminderModal = getPendingReminderModalElements();
@@ -4228,7 +4234,6 @@ function initPendingAgreementsUi() {
 function initTasksUi() {
   renderNotificationOptions();
   renderTaskTable();
-  renderUserDirectories();
 
   $("taskQueueExpand")?.addEventListener("click", () => toggleQueueExpanded("tasks"));
   $("taskQueueLoadMore")?.addEventListener("click", async () => {
@@ -4670,11 +4675,6 @@ function initGuidedTours() {
   ];
 
   const taskSteps = [
-    {
-      targetId: "taskUserDirectory",
-      title: "Review the user directory",
-      body: "Task assignments use the synced admin directory for assignees.",
-    },
     {
       targetId: "taskTitle",
       title: "Describe the task",
