@@ -460,6 +460,7 @@ function getPendingAgreementModalElements() {
     fileUpload: $("pendingAgreementFileUpload"),
     fileUploadButton: $("pendingAgreementFileUploadButton"),
     fileStatus: $("pendingAgreementFileStatus"),
+    executedNotice: $("pendingAgreementExecutedNotice"),
     notesList: $("pendingAgreementNotesList"),
     noteInput: $("pendingAgreementNoteInput"),
     noteAdd: $("pendingAgreementNoteAdd"),
@@ -517,6 +518,12 @@ function renderPendingAgreementFiles() {
       return `<div><a href="${link}" target="_blank" rel="noopener">${escapeHtml(label)}</a> · <span class="muted">${escapeHtml(uploaded)}</span></div>`;
     })
     .join("");
+}
+
+function updatePendingAgreementExecutedNotice(fileType) {
+  const { executedNotice } = getPendingAgreementModalElements();
+  if (!executedNotice) return;
+  executedNotice.classList.toggle("hidden", fileType !== "executed");
 }
 
 function renderPendingAgreementNotes() {
@@ -625,6 +632,7 @@ function openPendingAgreementModal(agreement) {
   if (fileType) {
     fileType.disabled = !canManage;
     if (!canManage) fileType.value = "draft";
+    updatePendingAgreementExecutedNotice(fileType.value);
   }
   if (fileUpload) fileUpload.disabled = !canUpload;
   if (fileUploadButton) fileUploadButton.disabled = !canUpload;
@@ -640,6 +648,32 @@ function closePendingAgreementModal() {
   overlay.classList.add("hidden");
   overlay.setAttribute("aria-hidden", "true");
   pendingAgreementModalState.agreementId = null;
+}
+
+function getPendingAgreementRecipientsElements() {
+  return {
+    overlay: $("pendingAgreementRecipientsModal"),
+    section: $("pendingAgreementRecipientsSection"),
+    input: $("pendingAgreementRecipientsInput"),
+    close: $("pendingAgreementRecipientsClose"),
+    cancel: $("pendingAgreementRecipientsCancel"),
+    trigger: $("pendingAgreementRecipientsButton"),
+  };
+}
+
+function openPendingAgreementRecipientsModal() {
+  const { overlay, input } = getPendingAgreementRecipientsElements();
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  input?.focus();
+}
+
+function closePendingAgreementRecipientsModal() {
+  const { overlay } = getPendingAgreementRecipientsElements();
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
 }
 
 function getPendingAgreementIntakeElements() {
@@ -3556,12 +3590,14 @@ function renderPendingAgreementRecipientsInput() {
 }
 
 async function loadPendingAgreementRecipients() {
-  const section = $("pendingAgreementRecipientsSection");
+  const { section, trigger } = getPendingAgreementRecipientsElements();
   if (!hasPermission("pending_agreements_manage")) {
     section?.classList.add("hidden");
+    trigger?.classList.add("hidden");
     return;
   }
   section?.classList.remove("hidden");
+  trigger?.classList.remove("hidden");
   try {
     const response = await fetchPendingAgreementRecipients();
     state.pendingAgreementRecipients = response.recipients || [];
@@ -4013,6 +4049,9 @@ function initPendingAgreementsUi() {
       closePendingAgreementModal();
     }
   });
+  agreementModal.fileType?.addEventListener("change", (event) => {
+    updatePendingAgreementExecutedNotice(event.target.value);
+  });
   agreementModal.save?.addEventListener("click", async () => {
     const agreementId = pendingAgreementModalState.agreementId;
     if (!agreementId) return;
@@ -4092,6 +4131,19 @@ function initPendingAgreementsUi() {
       await loadPendingAgreements({ reset: true });
     } catch (err) {
       if (agreementModal.fileStatus) agreementModal.fileStatus.textContent = `Upload failed. ${err.message}`;
+    }
+  });
+
+  const recipientsModal = getPendingAgreementRecipientsElements();
+  recipientsModal.trigger?.addEventListener("click", () => {
+    if (!hasPermission("pending_agreements_manage")) return;
+    openPendingAgreementRecipientsModal();
+  });
+  recipientsModal.close?.addEventListener("click", closePendingAgreementRecipientsModal);
+  recipientsModal.cancel?.addEventListener("click", closePendingAgreementRecipientsModal);
+  recipientsModal.overlay?.addEventListener("click", (event) => {
+    if (event.target === recipientsModal.overlay) {
+      closePendingAgreementRecipientsModal();
     }
   });
 
