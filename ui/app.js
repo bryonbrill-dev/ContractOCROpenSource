@@ -1430,6 +1430,9 @@ async function loadRecent() {
       const actions = [
         `<a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>`,
         isAdmin ? `<a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>` : null,
+        isAdmin
+          ? `<button class="contract-delete" data-id="${id}" data-title="${escapeHtml(title)}">Delete</button>`
+          : null,
       ]
         .filter(Boolean)
         .join("&nbsp;|&nbsp;");
@@ -1450,6 +1453,12 @@ async function loadRecent() {
     a.addEventListener("click", async (ev) => {
       ev.preventDefault();
       await loadDetail(a.dataset.id);
+    });
+  });
+
+  document.querySelectorAll(".contract-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await deleteContract(btn.dataset.id, btn.dataset.title);
     });
   });
 
@@ -1475,6 +1484,7 @@ function renderAllContractsTable(rows, append = false) {
         `<a href="${getApiBase()}/api/contracts/${id}/original" target="_blank">View</a>`,
         isAdmin ? `<a href="${getApiBase()}/api/contracts/${id}/download" target="_blank">Download</a>` : null,
         isAdmin ? `<button class="reprocess-btn" data-id="${id}">Reprocess</button>` : null,
+        isAdmin ? `<button class="contract-delete" data-id="${id}" data-title="${escapeHtml(title)}">Delete</button>` : null,
       ]
         .filter(Boolean)
         .join("&nbsp;|&nbsp;");
@@ -1511,6 +1521,12 @@ function renderAllContractsTable(rows, append = false) {
   document.querySelectorAll(".reprocess-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await reprocessContract(btn.dataset.id);
+    });
+  });
+
+  document.querySelectorAll(".contract-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await deleteContract(btn.dataset.id, btn.dataset.title);
     });
   });
 
