@@ -6180,7 +6180,28 @@ def delete_contract(
         context = _get_visibility_context(conn, request)
         _ensure_contract_visibility(conn, contract_id, context)
 
-        conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
+        try:
+            conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
+        except sqlite3.OperationalError as exc:
+            if "profit_centers_old" not in str(exc).lower():
+                raise
+            logger.warning(
+                "Repairing profit center links after delete failure: %s",
+                exc,
+            )
+            _ensure_profit_center_links(conn)
+            try:
+                conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
+            except sqlite3.OperationalError as retry_exc:
+                if "profit_centers_old" not in str(retry_exc).lower():
+                    raise
+                logger.warning(
+                    "Disabling foreign keys to remove contract %s after profit center repair.",
+                    contract_id,
+                )
+                conn.execute("PRAGMA foreign_keys = OFF;")
+                conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
+                conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("DELETE FROM contracts_fts WHERE contract_id = ?", (contract_id,))
 
     stored_path = existing["stored_path"]
