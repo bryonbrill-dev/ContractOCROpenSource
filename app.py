@@ -831,8 +831,21 @@ def _foreign_key_targets(conn: sqlite3.Connection, table_name: str) -> List[str]
     return [row["table"] for row in rows]
 
 
+def _table_schema_contains(conn: sqlite3.Connection, table_name: str, token: str) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    if not row or not row["sql"]:
+        return False
+    return token in row["sql"]
+
+
 def _repair_profit_center_links(conn: sqlite3.Connection, table_name: str) -> None:
-    if "profit_centers_old" not in _foreign_key_targets(conn, table_name):
+    targets = _foreign_key_targets(conn, table_name)
+    has_old_target = any(target.endswith("profit_centers_old") for target in targets)
+    has_old_schema = _table_schema_contains(conn, table_name, "profit_centers_old")
+    if not has_old_target and not has_old_schema:
         return
     logger.warning("Rebuilding %s to repair profit center foreign keys.", table_name)
     conn.execute("PRAGMA foreign_keys = OFF;")
