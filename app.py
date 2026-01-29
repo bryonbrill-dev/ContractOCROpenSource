@@ -885,6 +885,11 @@ def _repair_profit_center_links(conn: sqlite3.Connection, table_name: str) -> No
     conn.execute("PRAGMA foreign_keys = ON;")
 
 
+def _ensure_profit_center_links(conn: sqlite3.Connection) -> None:
+    _repair_profit_center_links(conn, "contract_profit_centers")
+    _repair_profit_center_links(conn, "user_profit_centers")
+
+
 def _apply_migrations(conn: sqlite3.Connection) -> None:
     """Apply simple, idempotent schema migrations for existing databases."""
 
@@ -1094,8 +1099,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         """
     )
 
-    _repair_profit_center_links(conn, "contract_profit_centers")
-    _repair_profit_center_links(conn, "user_profit_centers")
+    _ensure_profit_center_links(conn)
 
     _seed_agreement_types(conn)
     _seed_profit_centers(conn)
@@ -6153,6 +6157,7 @@ def delete_contract(
     _: Dict[str, Any] = Depends(require_user),
 ):
     with db() as conn:
+        _ensure_profit_center_links(conn)
         existing = conn.execute(
             "SELECT id, stored_path FROM contracts WHERE id = ?",
             (contract_id,),
