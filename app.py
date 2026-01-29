@@ -841,15 +841,37 @@ def _table_schema_contains(conn: sqlite3.Connection, table_name: str, token: str
     return token.lower() in row["sql"].lower()
 
 
-def _repair_profit_center_links(conn: sqlite3.Connection, table_name: str) -> None:
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _repair_profit_center_links(
+    conn: sqlite3.Connection,
+    table_name: str,
+    *,
+    force: bool = False,
+) -> None:
+    if not _table_exists(conn, table_name):
+        return
     targets = _foreign_key_targets(conn, table_name)
     has_old_target = any(target.endswith("profit_centers_old") for target in targets)
     has_old_schema = _table_schema_contains(conn, table_name, "profit_centers_old")
-    if not has_old_target and not has_old_schema:
+    if not force and not has_old_target and not has_old_schema:
         return
     logger.warning("Rebuilding %s to repair profit center foreign keys.", table_name)
     conn.execute("PRAGMA foreign_keys = OFF;")
-    conn.execute(f"ALTER TABLE {table_name} RENAME TO {table_name}_old")
+    old_table = f"{table_name}_old"
+    if _table_exists(conn, old_table):
+        logger.warning(
+            "Dropping leftover backup table %s before rebuild.",
+            old_table,
+        )
+        conn.execute(f"DROP TABLE {old_table}")
+    conn.execute(f"ALTER TABLE {table_name} RENAME TO {old_table}")
     if table_name == "contract_profit_centers":
         conn.executescript(
             """
@@ -898,9 +920,9 @@ def _repair_profit_center_links(conn: sqlite3.Connection, table_name: str) -> No
     conn.execute("PRAGMA foreign_keys = ON;")
 
 
-def _ensure_profit_center_links(conn: sqlite3.Connection) -> None:
-    _repair_profit_center_links(conn, "contract_profit_centers")
-    _repair_profit_center_links(conn, "user_profit_centers")
+def _ensure_profit_center_links(conn: sqlite3.Connection, *, force: bool = False) -> None:
+    _repair_profit_center_links(conn, "contract_profit_centers", force=force)
+    _repair_profit_center_links(conn, "user_profit_centers", force=force)
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:
@@ -6189,7 +6211,7 @@ def delete_contract(
                 "Repairing profit center links after delete failure: %s",
                 exc,
             )
-            _ensure_profit_center_links(conn)
+            _ensure_profit_center_links(conn, force=True)
             conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
         conn.execute("DELETE FROM contracts_fts WHERE contract_id = ?", (contract_id,))
 
