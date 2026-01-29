@@ -828,7 +828,7 @@ def _foreign_key_targets(conn: sqlite3.Connection, table_name: str) -> List[str]
         rows = conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall()
     except sqlite3.OperationalError:
         return []
-    return [row["table"] for row in rows]
+    return [row["table"].lower() for row in rows if row["table"]]
 
 
 def _table_schema_contains(conn: sqlite3.Connection, table_name: str, token: str) -> bool:
@@ -838,7 +838,7 @@ def _table_schema_contains(conn: sqlite3.Connection, table_name: str, token: str
     ).fetchone()
     if not row or not row["sql"]:
         return False
-    return token in row["sql"]
+    return token.lower() in row["sql"].lower()
 
 
 def _repair_profit_center_links(conn: sqlite3.Connection, table_name: str) -> None:
