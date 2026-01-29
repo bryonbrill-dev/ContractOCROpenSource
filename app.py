@@ -6190,18 +6190,7 @@ def delete_contract(
                 exc,
             )
             _ensure_profit_center_links(conn)
-            try:
-                conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
-            except sqlite3.OperationalError as retry_exc:
-                if "profit_centers_old" not in str(retry_exc).lower():
-                    raise
-                logger.warning(
-                    "Disabling foreign keys to remove contract %s after profit center repair.",
-                    contract_id,
-                )
-                conn.execute("PRAGMA foreign_keys = OFF;")
-                conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
-                conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
         conn.execute("DELETE FROM contracts_fts WHERE contract_id = ?", (contract_id,))
 
     stored_path = existing["stored_path"]
