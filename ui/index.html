@@ -19,7 +19,7 @@
       --sgh-radius: 10px;
     }
     body { font-family: Arial, sans-serif; margin: 0; background: #f1f5f9; color: #0f172a; }
-    body.theme-dark { background: #0f172a; color: #e2e8f0; }
+    body.theme-dark { background: #0f172a; color: #e2e8f0; color-scheme: dark; }
     .row { display: flex; gap: 16px; }
     .row.wrap { flex-wrap: wrap; }
     .col { flex: 1; }
@@ -317,9 +317,13 @@
     body.theme-dark .profit-center-group-list { border-color: #334155; background: #0b1220; }
     body.theme-dark .profit-center-group-block { border-color: #334155; background: #0f172a; }
     body.theme-dark .profit-center-group-title { color: #e2e8f0; border-bottom-color: #334155; }
+    body.theme-dark .planner-calendar { background: #1f2937; border-color: #1f2937; }
     body.theme-dark .planner-cell { background: #0f172a; }
-    body.theme-dark .planner-header { background: #1e293b; }
+    body.theme-dark .planner-header { background: #1e293b; color: #e2e8f0; }
+    body.theme-dark .planner-day { color: #e2e8f0; }
+    body.theme-dark .planner-day.muted { color: #64748b; }
     body.theme-dark .planner-entry { background: #111827; border-color: #1f2937; color: #e2e8f0; }
+    body.theme-dark .planner-entry .entry-meta { color: #cbd5f5; }
     body.theme-dark .contract-text { background: #0f172a; border-color: #1f2937; color: #e2e8f0; }
     body.theme-dark .preview-frame { background: #0f172a; border-color: #1f2937; }
     body.theme-dark.preview-fullscreen #contractContent { background: #0b1220; }
@@ -337,6 +341,14 @@
     body.theme-dark #authOverlay .text-slate-600 { color: #94a3b8; }
     body.theme-dark #authOverlay .text-slate-400 { color: #cbd5f5; }
     body.theme-dark #authOverlay .border-slate-200 { border-color: #1f2937; }
+    body.theme-dark .sgh-collapsible-header { background: #0f172a; border-color: #1f2937; }
+    body.theme-dark .sgh-collapsible-header:hover { background: #111827; }
+    body.theme-dark .sgh-collapsible-title { color: #e2e8f0; }
+    body.theme-dark .sgh-collapsible-subtitle { color: #94a3b8; }
+    body.theme-dark .sgh-chevron { color: #e2e8f0; }
+    body.theme-dark .legend-item { color: #cbd5f5; }
+    body.theme-dark .event-date-group { background: #0b1220; }
+    body.theme-dark .event-date-body { color: #cbd5f5; }
     .multi-select { width: 100%; min-height: 180px; max-height: 240px; }
     .multi-select option { padding: 4px; }
     .admin-user-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -429,6 +441,43 @@
     }
     details[open] > .sgh-collapsible-header .sgh-chevron {
       transform: rotate(180deg);
+    }
+    @media (max-width: 1100px) {
+      .app-shell { flex-direction: column; }
+      .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      }
+      .sidebar-footer { margin-top: 0; }
+      .nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+      .nav button { justify-content: flex-start; }
+    }
+    @media (max-width: 960px) {
+      .row { flex-direction: column; }
+      .col { width: 100%; }
+      .contracts-layout { grid-template-columns: minmax(0, 1fr); }
+      .contracts-right { order: 2; }
+      .top-bar { flex-direction: column; align-items: flex-start; }
+      .brand-logo { width: 150px; }
+      .app-main { padding: 16px; }
+      .queue-controls input { min-width: 140px; }
+      .preview-pane,
+      .contract-text { height: 420px; min-height: 420px; }
+    }
+    @media (max-width: 720px) {
+      table { display: block; width: 100%; overflow-x: auto; }
+      th, td { white-space: nowrap; }
+      .planner-calendar {
+        overflow-x: auto;
+        grid-template-columns: repeat(7, minmax(120px, 1fr));
+      }
+      .planner-cell { min-height: 90px; }
+      .month-nav { flex-wrap: wrap; }
+      .queue-header { align-items: flex-start; }
+      .queue-controls { width: 100%; }
+      .queue-controls input { flex: 1; min-width: 0; }
     }
   </style>
 </head>
